@@ -1,0 +1,29 @@
+name: Task Manager maintenance
+
+on:
+  schedule:
+    - cron: "30 21 * * *"   # 03:00 IST daily  -> backup + delete completed tasks older than 7 days
+    - cron: "0 */6 * * *"   # every 6 hours    -> Firebase usage check (emails admin at 70% / 90%)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "cleanup or usage"
+        default: "cleanup"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r backup/requirements.txt
+      - name: Run job
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          MODE: ${{ github.event.inputs.mode || (github.event.schedule == '30 21 * * *' && 'cleanup') || 'usage' }}
+        run: python backup/job.py "$MODE"

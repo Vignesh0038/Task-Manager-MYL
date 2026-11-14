@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#4F46E5">
+<title>Task Manager</title>
+<style>
+:root{--p:#4F46E5;--bg:#F3F4F6;--mut:#6B7280}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:#111827}
+.top{background:var(--p);color:#fff;display:flex;align-items:center;gap:10px;padding:8px 14px;position:sticky;top:0;z-index:5}
+.top .grow{flex:1}.top .who{font-size:12px;text-align:right}
+.top button{background:transparent;border:0;color:#fff;font-size:20px;cursor:pointer}
+.shell{display:grid;grid-template-columns:1fr;min-height:calc(100vh - 48px)}
+.nav{position:fixed;bottom:0;left:0;right:0;background:#fff;display:flex;border-top:1px solid #e5e7eb;z-index:5}
+.nav button{flex:1;border:0;background:#fff;padding:8px 2px;font-size:11px;color:var(--mut);cursor:pointer}
+.nav button .ic{display:block;font-size:20px}
+.nav button.on{color:var(--p);font-weight:700}
+.main{padding:14px 14px 90px}
+.wrap{max-width:900px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+@media(min-width:800px){
+ .shell{grid-template-columns:100px 1fr}
+ .nav{position:static;flex-direction:column;border-top:0;border-right:1px solid #e5e7eb;padding-top:10px}
+ .nav button{flex:none;padding:14px 4px}
+ .main{padding-bottom:30px}
+}
+.card{background:#fff;border-radius:14px;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,.08);display:flex;flex-direction:column;gap:8px}
+.card.click{cursor:pointer}.card.click:hover{background:#fafafa}
+.row{display:flex;gap:8px;align-items:center}.row.wrap{flex-wrap:wrap}
+.grow{flex:1}
+h2{margin:0;font-size:22px}h3{margin:6px 0 0;font-size:18px}
+.title{font-weight:700;font-size:16px}
+.muted{color:var(--mut)}.sm{font-size:12px}
+.badge{color:#fff;border-radius:12px;padding:3px 10px;font-size:11px;font-weight:700;display:inline-block}
+input,select,textarea{font:inherit;padding:10px 12px;border:1px solid #d1d5db;border-radius:10px;background:#fff;min-width:0}
+textarea{min-height:80px;resize:vertical}
+.f{display:flex;flex-direction:column;gap:4px;flex:1;min-width:180px}
+.f label{font-size:12px;color:var(--mut)}
+.btn{background:var(--p);color:#fff;border:0;border-radius:10px;padding:10px 16px;font:inherit;font-weight:600;cursor:pointer}
+.btn.o{background:#fff;color:var(--p);border:1px solid var(--p)}
+.btn.g{background:#0D9488}.btn.r{background:#DC2626}.btn.s{padding:6px 10px;font-size:12px}
+.btn:disabled{opacity:.5}
+.tiles{display:flex;gap:10px;justify-content:space-around}
+.tile{text-align:center;flex:1}.tile b{font-size:22px;display:block}
+.bar{height:10px;background:#e5e7eb;border-radius:6px;overflow:hidden}.bar i{display:block;height:100%}
+.warn{background:#FEF2F2;border:1px solid #FCA5A5;color:#991B1B;border-radius:12px;padding:10px 14px;font-size:14px}
+.auth{max-width:400px;margin:40px auto;padding:0 14px}
+.auth .card{align-items:stretch;padding:22px}
+.center{text-align:center}
+.hist{font-size:12px;color:var(--mut)}
+button.lnk{background:none;border:0;color:var(--p);cursor:pointer;font:inherit;padding:4px}
+#toast{position:fixed;left:50%;bottom:80px;transform:translateX(-50%);background:#111827;color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:20;max-width:90vw}
+#toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div id="app"><div class="auth center muted">Loading…</div></div>
+<div id="toast"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword,
+         sendPasswordResetEmail, updatePassword, EmailAuthProvider, reauthenticateWithCredential }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, getDoc,
+         getDocs, setDoc, addDoc, updateDoc, deleteDoc, query, where, orderBy, limit, onSnapshot,
+         arrayUnion, increment, writeBatch }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+/* ====================== 1. EDIT THESE TWO THINGS ====================== */
+const firebaseConfig = {
+  apiKey: "AIzaSyC9le58rq67g0z50R2LGi2NAodzp7tUO5M",
+  authDomain: "task-manager-myl.firebaseapp.com",
+  projectId: "task-manager-myl",
+  appId: "1:1019954426444:web:87b7739043f97f9b15fae9"
+};
+const ADMIN_EMAIL = "j.vignesh112711@gmail.com";   // must be the same as in firestore.rules
+/* ====================================================================== */
+
+const APP_VERSION = "2.0.0";
+const LIMITS = { reads: 50000, writes: 20000, deletes: 20000 };   // Firebase Spark daily limits
+const WARN = 0.7;                                                 // warn admin at 70 %
+const STATUSES = ["Pending", "In Progress", "On Hold", "Rework", "Completed", "Rejected"];
+const PRIORITIES = ["Low", "Medium", "High"];
+const S_COL = { "Pending": "#F59E0B", "In Progress": "#2563EB", "On Hold": "#6B7280", "Rework": "#7C3AED",
+                "Completed": "#16A34A", "Rejected": "#DC2626" };
+const P_COL = { Low: "#16A34A", Medium: "#F59E0B", High: "#DC2626" };
+const R_COL = { admin: "#4F46E5", manager: "#0D9488", user: "#6B7280" };
+const ROLES = ["user", "manager", "admin"];
+const MIN_PW = 6;
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const secAuth = getAuth(initializeApp(firebaseConfig, "secondary"));   // used only to create users
+const db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
+
+/* ---------- small helpers ---------- */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const nowIso = () => new Date().toISOString();
+const fmt = iso => { if (!iso) return "-"; const d = new Date(iso); const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+const pacificDay = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date());
+let toastT;
+function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 3500); }
+const errMsg = e => ({ "auth/email-already-in-use": "This email already has an account", "auth/invalid-email": "Invalid email",
+  "auth/weak-password": `Password must be at least ${MIN_PW} characters`, "auth/wrong-password": "Wrong password",
+  "auth/invalid-credential": "Invalid email or password", "auth/too-many-requests": "Too many attempts - try later",
+  "permission-denied": "Not allowed" }[e.code] || e.message || String(e));
+
+/* ---------- Firestore usage counter (keeps us inside the free limits) ---------- */
+const UC = { r: 0, w: 0, d: 0 };
+const track = (k, n = 1) => { UC[k] += n; };
+async function flushUsage() {
+  if (!S.me || !(UC.r + UC.w + UC.d)) return;
+  const s = { ...UC }; UC.r = UC.w = UC.d = 0;
+  try {
+    await setDoc(doc(db, "usage", pacificDay()), { reads: increment(s.r), writes: increment(s.w + 1), deletes: increment(s.d) }, { merge: true });
+  } catch (e) { UC.r += s.r; UC.w += s.w; UC.d += s.d; }
+}
+setInterval(flushUsage, 5 * 60 * 1000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushUsage(); });
+
+const rd = async q => { const s = await getDocs(q); track("r", Math.max(1, s.size)); return s; };
+const rdoc = async r => { const s = await getDoc(r); track("r"); return s; };
+async function wr(fn, n = 1) {
+  try { track("w", n); const r = await fn(); return r ?? true; }
+  catch (e) { console.error(e); toast("Failed: " + errMsg(e)); return false; }
+}
+
+/* ---------- state ---------- */
+const S = { me: null, tab: "mine", view: "list", task: null, parent: null, filter: "All", mem: "All", asec: "users",
+  users: [], branches: [], tasks: [], btasks: [], adminTasks: null, usage: null, cur: undefined, subs: [], crumbs: [],
+  mode: "login", settingUp: false, ut: null };
+const unsub = {};
+const uById = id => S.users.find(u => u.id === id);
+const uname = id => uById(id)?.name || "?";
+const bname = id => S.branches.find(b => b.id === id)?.name || null;
+const isAdmin = () => S.me?.role === "admin";
+const isMgr = () => S.me?.role === "manager";
+const hist = (action, note) => ({ ts: nowIso(), by: S.me.id, byName: S.me.name, action, note: note || "" });
+const sortTasks = a => [...a].sort((x, y) => {
+  const cx = ["Completed", "Rejected"].includes(x.status) ? 1 : 0, cy = ["Completed", "Rejected"].includes(y.status) ? 1 : 0;
+  return cx - cy || (y.createdAt || "").localeCompare(x.createdAt || ""); });
+
+function listen(key, q, cb, onErr) {
+  unsub[key]?.();
+  unsub[key] = onSnapshot(q, snap => {
+    if (!snap.metadata.fromCache && !snap.metadata.hasPendingWrites) track("r", Math.max(1, snap.docChanges().length));
+    cb(snap);
+  }, err => { console.error(key, err); toast("Load error: " + errMsg(err)); onErr?.(err); });
+}
+function stopListen(...keys) { keys.forEach(k => { unsub[k]?.(); delete unsub[k]; }); }
+const docs = snap => snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+/* ---------- session ---------- */
+async function boot(u) {
+  try {
+    const s = await rdoc(doc(db, "users", u.uid));
+    if (!s.exists() || s.data().active === false) { toast("Your account is not active. Contact the admin."); await signOut(auth); return; }
+    S.me = { id: u.uid, ...s.data() }; S.tab = "mine"; S.view = "list"; S.filter = "All"; S.mem = "All";
+    startSession(); render();
+  } catch (e) { toast("Cannot load profile: " + errMsg(e)); await signOut(auth); }
+}
+function startSession() {
+  listen("users", collection(db, "users"), snap => {
+    S.users = docs(snap).sort((a, b) => a.name.localeCompare(b.name));
+    const m = uById(S.me.id);
+    if (m) { if (m.active === false) { logout("Your account was deactivated"); return; } S.me = m; }
+    refresh();
+  });
+  listen("branches", collection(db, "branches"), snap => { S.branches = docs(snap).sort((a, b) => a.name.localeCompare(b.name)); refresh(); });
+  listen("tasks", query(collection(db, "tasks"), where("participants", "array-contains", S.me.id)), snap => { S.tasks = docs(snap); refresh(); });
+  clearInterval(S.ut);
+  if (isAdmin()) { loadUsage(); S.ut = setInterval(loadUsage, 10 * 60 * 1000); }
+}
+async function logout(msg) {
+  await flushUsage();
+  Object.keys(unsub).forEach(k => stopListen(k)); clearInterval(S.ut);
+  S.me = null; S.users = []; S.tasks = []; S.btasks = []; S.adminTasks = null; S.mode = "login";
+  await signOut(auth); render(); if (msg) toast(msg);
+}
+onAuthStateChanged(auth, async u => {
+  if (S.settingUp) return;
+  if (!u) { Object.keys(unsub).forEach(k => stopListen(k)); S.me = null; render(); return; }
+  await boot(u);
+});
+
+/* ---------- usage (admin) ---------- */
+async function loadUsage() {
+  try { const s = await rdoc(doc(db, "usage", pacificDay())); S.usage = s.exists() ? s.data() : {}; refresh(); } catch (e) { /* ignore */ }
+}
+const usedOf = k => (S.usage?.[k] || 0) + UC[{ reads: "r", writes: "w", deletes: "d" }[k]];
+const usageAlerts = () => Object.keys(LIMITS).filter(k => usedOf(k) / LIMITS[k] >= WARN);
+
+/* ---------- UI atoms ---------- */
+const badge = (t, c) => `<span class="badge" style="background:${c}">${esc(t)}</span>`;
+const opt = (v, l, sel) => `<option value="${esc(v)}" ${String(sel) === String(v) ? "selected" : ""}>${esc(l)}</option>`;
+const tile = (n, l, c) => `<div class="tile"><b style="color:${c}">${n}</b><span class="muted sm">${l}</span></div>`;
+
+function taskCard(t) {
+  const meta = [badge(t.status, S_COL[t.status] || "#6B7280"), badge(t.priority, P_COL[t.priority] || "#6B7280")];
+  if (t.reworkCount) meta.push(badge("Reworked ×" + t.reworkCount, "#9333EA"));
+  if (t.due) meta.push(`<span class="muted sm">Due ${esc(t.due)}</span>`);
+  return `<div class="card click" data-act="open" data-id="${t.id}">
+    <div class="title">${t.parentId ? "↳ " : ""}${esc(t.title)}</div>
+    <div class="muted sm">👤 ${esc(uname(t.createdBy))} → ${esc(uname(t.assignedTo))}</div>
+    <div class="row wrap">${meta.join("")}</div></div>`;
+}
+const statTiles = rows => `<div class="card"><div class="tiles">${["Pending", "In Progress", "Rework", "Completed"]
+  .map(s => tile(rows.filter(r => r.status === s).length, s, S_COL[s])).join("")}</div></div>`;
+const filterSel = () => `<select data-chg="filter">${["All", ...STATUSES].map(s => opt(s, s, S.filter)).join("")}</select>`;
+const retention = `<div class="muted sm center">Completed tasks are backed up to the admin's email and removed 7 days after completion.</div>`;
+
+/* ---------- views ---------- */
+function authView() {
+  const m = S.mode;
+  const f = (id, label, type = "text") => `<div class="f"><label>${label}</label><input id="${id}" type="${type}" autocomplete="${type === "password" ? "current-password" : "on"}"></div>`;
+  return `<div class="auth"><div class="card">
+    <div class="center" style="font-size:48px">✅</div><h2 class="center">Task Manager</h2>
+    <div class="center muted">Assign. Delegate. Complete.</div>
+    ${m === "setup" ? f("a_name", "Admin full name") : ""}
+    ${f("a_email", "Email")}${f("a_pw", "Password", "password")}
+    ${m === "setup"
+      ? `<button class="btn" data-act="setupGo">Create admin account</button><button class="lnk" data-act="mode" data-m="login">Back to login</button>`
+      : `<button class="btn" data-act="login">Login</button>
+         <button class="lnk" data-act="forgot">Forgot password?</button>
+         <button class="lnk muted sm" data-act="mode" data-m="setup">First-time admin setup</button>`}
+    <div class="center muted sm">v${APP_VERSION}</div></div></div>`;
+}
+
+function listView(kind) {
+  const rows = sortTasks(S.tasks.filter(t => kind === "mine" ? t.assignedTo === S.me.id : t.createdBy === S.me.id));
+  const shown = rows.filter(t => S.filter === "All" || t.status === S.filter);
+  return `<div class="row"><h2 class="grow">${kind === "mine" ? "Assigned to me" : "Assigned by me"}</h2>${filterSel()}</div>
+    ${statTiles(rows)}
+    ${shown.map(taskCard).join("") || `<div class="card center muted">No tasks here yet.</div>`}${retention}`;
+}
+
+function formView() {
+  const active = S.users.filter(u => u.active !== false);
+  const pt = S.parent ? (S.tasks.find(t => t.id === S.parent) || S.cur) : null;
+  return `<h2>${S.parent ? "New subtask" : "New task"}</h2>
+    ${pt ? `<div class="muted">Under: ${esc(pt.title)}</div>` : ""}
+    <div class="card">
+      <div class="f"><label>Title</label><input id="f_title"></div>
+      <div class="f"><label>Description</label><textarea id="f_desc"></textarea></div>
+      <div class="row wrap">
+        <div class="f"><label>Assign to</label><select id="f_who"><option value="">- select -</option>${active.map(u => opt(u.id, `${u.name} (${u.email})`)).join("")}</select></div>
+        <div class="f"><label>Priority</label><select id="f_pri">${PRIORITIES.map(p => opt(p, p, "Medium")).join("")}</select></div>
+        <div class="f"><label>Due date (optional)</label><input id="f_due" type="date"></div>
+      </div>
+      <div class="row"><button class="btn" id="saveBtn" data-act="saveTask">Assign</button><button class="btn o" data-act="cancelForm">Cancel</button></div>
+    </div>`;
+}
+
+function accountView() {
+  const u = S.me;
+  const f = (id, l) => `<div class="f"><label>${l}</label><input id="${id}" type="password" autocomplete="new-password"></div>`;
+  return `<h2>My account</h2>
+    <div class="card"><div class="title">${esc(u.name)}</div><div class="muted">${esc(u.email)}</div>
+      <div class="muted">Role: ${esc(u.role)}</div><div class="muted">Branch: ${esc(bname(u.branchId) || "Not assigned")}</div></div>
+    <div class="card"><h3>Change password</h3>${f("c_cur", "Current password")}${f("c_new", "New password")}${f("c_con", "Confirm new password")}
+      <div><button class="btn" data-act="changePw">Change password</button></div></div>`;
+}
+
+function detailView() {
+  const t = S.cur;
+  if (t === undefined) return `<div class="card center muted">Loading…</div>`;
+  const back = `<div class="row"><button class="btn o s" data-act="back">← Back</button><span class="muted">Task details</span></div>`;
+  if (t === null) return back + `<div class="card center muted">Task not found, deleted, or you have no access.</div>`;
+  const me = S.me.id, can = isAdmin() || (t.participants || []).includes(me);
+  const bc = S.crumbs.length ? `<div class="row wrap">${S.crumbs.map(c => `<button class="lnk" data-act="open" data-id="${c.id}">${esc(c.title)} ›</button>`).join("")}</div>` : "";
+  const info = `<div class="card"><h2>${esc(t.title)}</h2>
+    <div class="row wrap">${badge(t.status, S_COL[t.status] || "#6B7280")}${badge(t.priority, P_COL[t.priority] || "#6B7280")}${t.reworkCount ? badge("Reworked ×" + t.reworkCount, "#9333EA") : ""}</div>
+    <div>${esc(t.description || "No description")}</div><hr style="width:100%;border:0;border-top:1px solid #e5e7eb">
+    <div class="sm">Assigned by: ${esc(uname(t.createdBy))}</div><div class="sm">Assigned to: ${esc(uname(t.assignedTo))}</div>
+    <div class="sm">Created: ${fmt(t.createdAt)} &nbsp; Due: ${esc(t.due || "-")}</div>
+    ${t.completedAt ? `<div class="sm" style="color:#16A34A">Completed: ${fmt(t.completedAt)} (auto-removed 7 days after this)</div>` : ""}
+    ${t.remarks ? `<div class="sm muted">Last remark: ${esc(t.remarks)}</div>` : ""}</div>`;
+  const upd = can ? `<div class="card"><div class="row wrap">
+      <div class="f"><label>Update status</label><select id="st">${STATUSES.map(s => opt(s, s, t.status)).join("")}</select></div>
+      <div class="f" style="flex:2"><label>Remark / reason (optional)</label><input id="remark"></div></div>
+      <div class="row wrap"><button class="btn" data-act="updateStatus">Update</button>
+        <button class="btn g" data-act="newSub">Assign subtask</button>
+        ${isAdmin() || me === t.createdBy ? `<button class="btn r" data-act="delTask">Delete task</button>` : ""}</div></div>` : "";
+  const hs = [...(t.history || [])].reverse().map(h => `<div class="hist">${fmt(h.ts)} • ${esc(h.byName || uname(h.by))} • ${esc(h.action)}${h.note ? " – " + esc(h.note) : ""}</div>`).join("");
+  return `${back}${bc}${info}${upd}
+    <h3>Subtasks (${S.subs.length})</h3>${sortTasks(S.subs).map(taskCard).join("") || `<div class="muted">No subtasks</div>`}
+    <h3>History</h3>${hs}`;
+}
+
+function branchView() {
+  const bid = S.me.branchId;
+  if (!bname(bid)) return `<h2>My branch</h2><div class="card muted">You are not assigned to a branch yet. Ask the admin.</div>`;
+  const members = S.users.filter(u => u.branchId === bid);
+  const shown = sortTasks(S.btasks).filter(t => (S.filter === "All" || t.status === S.filter) &&
+    (S.mem === "All" || t.assignedTo === S.mem || t.createdBy === S.mem));
+  return `<h2>Branch: ${esc(bname(bid))}</h2><div class="muted">${members.length} member(s) • ${S.btasks.length} task(s)</div>
+    <div class="row wrap">${filterSel()}<select data-chg="mem">${opt("All", "All members", S.mem)}${members.map(m => opt(m.id, m.name, S.mem)).join("")}</select></div>
+    ${statTiles(S.btasks)}${shown.map(taskCard).join("") || `<div class="card center muted">No tasks found.</div>`}`;
+}
+
+function adminView() {
+  const sec = S.asec;
+  const tabs = `<div class="row wrap">${[["users", "👥 Users"], ["branches", "🏢 Branches"], ["tasks", "📋 All tasks"], ["usage", "📊 Usage"]]
+    .map(([k, l]) => `<button class="btn ${sec === k ? "" : "o"}" data-act="asec" data-k="${k}">${l}</button>`).join("")}</div>`;
+  const alerts = usageAlerts();
+  const banner = alerts.length ? `<div class="warn">⚠️ Firebase free-limit warning: ${alerts.map(k => `${k} ${Math.round(usedOf(k) / LIMITS[k] * 100)}%`).join(", ")} of today's quota used.</div>` : "";
+  let body = "";
+  if (sec === "users") {
+    const branchOpts = sel => opt("", "- No branch -", sel || "") + S.branches.map(b => opt(b.id, b.name, sel || "")).join("");
+    const f = (id, l, t = "text") => `<div class="f"><label>${l}</label><input id="${id}" type="${t}"></div>`;
+    body = `<div class="card"><h3>Create user</h3>
+      <div class="row wrap">${f("u_name", "Full name")}${f("u_email", "Email", "email")}</div>
+      <div class="row wrap">${f("u_pw", "Temporary password (min " + MIN_PW + ")", "text")}
+        <div class="f"><label>Role</label><select id="u_role">${ROLES.map(r => opt(r, r, "user")).join("")}</select></div>
+        <div class="f"><label>Branch</label><select id="u_branch">${branchOpts("")}</select></div></div>
+      <div><button class="btn" data-act="createUser">Create user</button></div>
+      <div class="muted sm">Tip: after creating, use "Send reset email" so the user sets their own password.</div></div>
+      <h3>Users (${S.users.length})</h3>` +
+      S.users.map(x => {
+        const self = x.id === S.me.id;
+        return `<div class="card"><div class="row wrap"><div class="grow"><b>${esc(x.name)}</b><div class="muted sm">${esc(x.email)}</div></div>
+          ${badge(x.role, R_COL[x.role] || "#6B7280")}${bname(x.branchId) ? badge(bname(x.branchId), "#7C3AED") : ""}${x.active === false ? badge("inactive", "#DC2626") : ""}</div>
+          ${self ? "" : `<div class="row wrap">
+            <select data-chg="setRole" data-id="${x.id}">${ROLES.map(r => opt(r, r, x.role)).join("")}</select>
+            <select data-chg="setBranch" data-id="${x.id}">${branchOpts(x.branchId)}</select>
+            <button class="btn o s" data-act="resetPw" data-id="${x.id}">Send reset email</button>
+            <button class="btn ${x.active === false ? "g" : "r"} s" data-act="toggleActive" data-id="${x.id}">${x.active === false ? "Activate" : "Deactivate"}</button></div>`}</div>`;
+      }).join("");
+  } else if (sec === "branches") {
+    body = `<div class="card"><h3>Create branch</h3><div class="row wrap"><input id="b_name" placeholder="Branch name" class="grow"><button class="btn" data-act="createBranch">Create</button></div>
+      <div class="muted sm">Then go to Users: pick a branch for each user and set a user's role to manager.</div></div>
+      <h3>Branches (${S.branches.length})</h3>` +
+      (S.branches.map(b => { const m = S.users.filter(u => u.branchId === b.id);
+        return `<div class="card"><div class="row"><div class="grow"><b>${esc(b.name)}</b><div class="muted sm">${m.length} member(s) • Manager: ${esc(m.filter(x => x.role === "manager").map(x => x.name).join(", ") || "none")}</div></div>
+          <button class="btn r s" data-act="delBranch" data-id="${b.id}">Delete</button></div></div>`; }).join("") || `<div class="muted">No branches yet</div>`);
+  } else if (sec === "tasks") {
+    const rows = S.adminTasks;
+    body = `<div class="row"><h3 class="grow">All tasks${rows ? ` (${rows.length}, newest 300)` : ""}</h3><button class="btn o s" data-act="loadAll">${rows ? "Refresh" : "Load"}</button></div>
+      <div class="muted sm">Loading costs one read per task, so it only loads when you press the button.</div>` +
+      (rows ? rows.map(taskCard).join("") || `<div class="muted">No tasks</div>` : "");
+  } else {
+    const bars = Object.keys(LIMITS).map(k => { const u = usedOf(k), p = Math.min(100, u / LIMITS[k] * 100), c = p >= 90 ? "#DC2626" : p >= WARN * 100 ? "#F59E0B" : "#16A34A";
+      return `<div><div class="row"><b class="grow">${k}</b><span class="muted sm">${u.toLocaleString()} / ${LIMITS[k].toLocaleString()} (${p.toFixed(1)}%)</span></div><div class="bar"><i style="width:${p}%;background:${c}"></i></div></div>`; }).join("");
+    body = `<div class="card"><h3>Firebase usage today (estimate)</h3>${bars}
+      <div class="muted sm">Counted by this app (resets at midnight Pacific time). The Firebase console shows exact figures. You also get an email at 70% and 90%.</div>
+      <div><button class="btn o s" data-act="refreshUsage">Refresh</button></div></div>`;
+  }
+  return `<h2>Admin panel</h2>${tabs}${banner}${body}`;
+}
+
+/* ---------- shell / render ---------- */
+function tabsFor() {
+  const t = [["mine", "📥", "My Tasks"], ["by", "📤", "Assigned"], ["new", "➕", "New Task"], ["acct", "👤", "Account"]];
+  if (isAdmin()) t.push(["admin", "⚙️", "Admin"]); else if (isMgr()) t.push(["branch", "🏢", "Branch"]);
+  return t;
+}
+const viewForTab = k => ({ mine: "list", by: "list", new: "form", acct: "account", admin: "admin", branch: "branch" }[k] || "list");
+
+function capture() {
+  const o = {}; document.querySelectorAll("#app input[id],#app select[id],#app textarea[id]").forEach(e => o[e.id] = e.value);
+  const a = document.activeElement; o.__f = a && a.id ? { id: a.id, s: a.selectionStart, e: a.selectionEnd } : null; return o;
+}
+function restore(o) {
+  for (const k in o) { if (k === "__f") continue; const e = document.getElementById(k); if (e && e.value !== o[k]) e.value = o[k]; }
+  if (o.__f) { const e = document.getElementById(o.__f.id); if (e) { e.focus(); try { e.setSelectionRange(o.__f.s, o.__f.e); } catch { } } }
+}
+function render(keep) {
+  const saved = keep ? capture() : null, root = $("#app");
+  if (!S.me) { root.innerHTML = authView(); return; }
+  if ((S.tab === "admin" && !isAdmin()) || (S.tab === "branch" && !isMgr())) { S.tab = "mine"; S.view = "list"; }
+  let body;
+  switch (S.view) {
+    case "detail": body = detailView(); break;
+    case "form": body = formView(); break;
+    case "account": body = accountView(); break;
+    case "admin": body = adminView(); break;
+    case "branch": body = branchView(); break;
+    default: body = listView(S.tab === "by" ? "by" : "mine");
+  }
+  const u = S.me, tabs = tabsFor(), on = S.view === "form" && !S.parent ? "new" : S.tab;
+  const warn = isAdmin() && usageAlerts().length ? " ⚠️" : "";
+  root.innerHTML = `<div class="top"><span style="font-size:20px">✅</span><b>Task Manager</b><span class="grow"></span>
+      <span class="who">${esc(u.name)} • ${esc(u.role.toUpperCase())}${bname(u.branchId) ? " • " + esc(bname(u.branchId)) : ""}<br>v${APP_VERSION}</span>
+      <button title="Logout" data-act="logout">⏻</button></div>
+    <div class="shell"><nav class="nav">${tabs.map(([k, i, l]) => `<button class="${on === k ? "on" : ""}" data-act="nav" data-k="${k}"><span class="ic">${i}</span>${l}${k === "admin" ? warn : ""}</button>`).join("")}</nav>
+    <main class="main"><div class="wrap">${body}</div></main></div>`;
+  if (saved) restore(saved);
+}
+const refresh = () => { if (S.me && ["list", "detail", "admin", "branch"].includes(S.view)) render(true); };
+
+/* ---------- navigation ---------- */
+function leaveDetail() { stopListen("detail", "subs"); S.cur = undefined; S.subs = []; S.crumbs = []; }
+function nav(k) {
+  leaveDetail();
+  S.tab = k; S.view = viewForTab(k); S.parent = null; S.filter = "All"; S.mem = "All";
+  if (k !== "branch") stopListen("branch");
+  if (k === "branch" && S.me.branchId) {
+    S.btasks = [];
+    listen("branch", query(collection(db, "tasks"), where("branchIds", "array-contains", S.me.branchId)), snap => { S.btasks = docs(snap); refresh(); });
+  }
+  if (k === "admin") loadUsage();
+  render();
+}
+function openTask(id) {
+  leaveDetail(); S.view = "detail"; S.task = id; S.cur = undefined; render();
+  listen("detail", doc(db, "tasks", id), snap => {
+    const first = S.cur === undefined;
+    S.cur = snap.exists() ? { id: snap.id, ...snap.data() } : null;
+    if (first && S.cur?.parentId) loadCrumbs(S.cur.parentId);
+    refresh();
+  }, () => { S.cur = null; refresh(); });
+  const subQ = isAdmin() ? query(collection(db, "tasks"), where("parentId", "==", id))
+    : query(collection(db, "tasks"), where("parentId", "==", id), where("participants", "array-contains", S.me.id));
+  listen("subs", subQ, snap => { S.subs = docs(snap); refresh(); });
+}
+async function loadCrumbs(pid) {
+  const out = []; let p = pid, n = 0;
+  while (p && n < 6) {
+    let t = S.tasks.find(x => x.id === p) || S.adminTasks?.find(x => x.id === p) || S.btasks.find(x => x.id === p);
+    if (!t) { try { const s = await rdoc(doc(db, "tasks", p)); if (s.exists()) t = { id: s.id, ...s.data() }; } catch { } }
+    if (!t) break; out.unshift({ id: t.id, title: t.title }); p = t.parentId; n++;
+  }
+  S.crumbs = out; refresh();
+}
+
+/* ---------- actions ---------- */
+const ACT = {
+  mode: d => { S.mode = d.m; render(); },
+  async login() {
+    const e = $("#a_email").value.trim(), p = $("#a_pw").value;
+    if (!e || !p) return toast("Enter email and password");
+    try { await signInWithEmailAndPassword(auth, e, p); } catch (x) { toast(errMsg(x)); }
+  },
+  async forgot() {
+    const e = $("#a_email").value.trim(); if (!e) return toast("Type your email first");
+    try { await sendPasswordResetEmail(auth, e); toast("If this email is registered, a reset link was sent"); } catch (x) { toast(errMsg(x)); }
+  },
+  async setupGo() {
+    const name = $("#a_name").value.trim(), e = $("#a_email").value.trim().toLowerCase(), p = $("#a_pw").value;
+    if (!name) return toast("Enter your name");
+    if (e !== ADMIN_EMAIL.toLowerCase()) return toast("This email is not the admin email set in the app");
+    if (p.length < MIN_PW) return toast(`Password must be at least ${MIN_PW} characters`);
+    S.settingUp = true;
+    try {
+      const c = await createUserWithEmailAndPassword(auth, e, p);
+      await setDoc(doc(db, "users", c.user.uid), { name, email: e, role: "admin", branchId: null, active: true, created: nowIso() });
+      track("w");
+      S.settingUp = false; await boot(c.user);
+    } catch (x) { S.settingUp = false; toast(errMsg(x)); try { await signOut(auth); } catch { } }
+  },
+  logout: () => logout(),
+  nav: d => nav(d.k),
+  open: d => openTask(d.id),
+  back() {
+    const p = S.cur?.parentId;
+    if (p) return openTask(p);
+    leaveDetail(); S.view = viewForTab(S.tab); render();
+  },
+  newSub() { S.parent = S.cur.id; S.view = "form"; render(); },
+  cancelForm() { if (S.parent) { const p = S.parent; S.parent = null; openTask(p); } else nav("mine"); },
+  async saveTask() {
+    const title = $("#f_title").value.trim(), who = $("#f_who").value, due = $("#f_due").value;
+    if (!title) return toast("Title is required");
+    if (!who) return toast("Select a user to assign");
+    const btn = $("#saveBtn"); btn.disabled = true;
+    const data = {
+      parentId: S.parent || null, title, description: $("#f_desc").value.trim(), createdBy: S.me.id, assignedTo: who,
+      participants: [...new Set([S.me.id, who])], branchIds: [...new Set([S.me.branchId, uById(who)?.branchId].filter(Boolean))],
+      status: "Pending", priority: $("#f_pri").value, due: due || "", remarks: "", createdAt: nowIso(), completedAt: null,
+      reworkCount: 0, history: [hist("Created", "Assigned to " + uname(who))]
+    };
+    const ok = await wr(() => addDoc(collection(db, "tasks"), data));
+    if (!ok) { btn.disabled = false; return; }
+    toast(S.parent ? "Subtask assigned" : "Task assigned");
+    if (S.parent) { const p = S.parent; S.parent = null; openTask(p); } else nav("by");
+  },
+  async updateStatus() {
+    const t = S.cur, ns = $("#st").value, remark = ($("#remark").value || "").trim();
+    if (ns === "Completed" && S.subs.some(s => !["Completed", "Rejected"].includes(s.status))) return toast("Finish all subtasks before completing this task");
+    const upd = {
+      status: ns, remarks: remark || t.remarks || "",
+      completedAt: ns === "Completed" ? (t.status === "Completed" && t.completedAt ? t.completedAt : nowIso()) : null,
+      history: arrayUnion(hist(`Status → ${ns}`, remark))
+    };
+    if (ns === "Rework" && t.status !== "Rework") upd.reworkCount = increment(1);
+    if (await wr(() => updateDoc(doc(db, "tasks", t.id), upd))) { $("#remark").value = ""; toast("Status updated"); }
+  },
+  async delTask() {
+    if (!confirm("Delete this task, its subtasks and history?")) return;
+    const t = S.cur;
+    async function del(id) {
+      const q = isAdmin() ? query(collection(db, "tasks"), where("parentId", "==", id))
+        : query(collection(db, "tasks"), where("parentId", "==", id), where("participants", "array-contains", S.me.id));
+      for (const d of (await rd(q)).docs) await del(d.id);
+      track("d"); await deleteDoc(doc(db, "tasks", id));
+    }
+    try {
+      stopListen("detail", "subs"); await del(t.id); toast("Task deleted"); S.cur = undefined;
+      if (t.parentId) openTask(t.parentId); else { S.view = viewForTab(S.tab); render(); }
+    } catch (e) { toast("Cannot delete (some subtasks belong to others - ask the admin): " + errMsg(e)); openTask(t.id); }
+  },
+  async changePw() {
+    const cur = $("#c_cur").value, nw = $("#c_new").value, con = $("#c_con").value;
+    if (nw.length < MIN_PW) return toast(`New password must be at least ${MIN_PW} characters`);
+    if (nw !== con) return toast("New passwords do not match");
+    try {
+      await reauthenticateWithCredential(auth.currentUser, EmailAuthProvider.credential(auth.currentUser.email, cur));
+      await updatePassword(auth.currentUser, nw);
+      ["c_cur", "c_new", "c_con"].forEach(i => $("#" + i).value = ""); toast("Password changed");
+    } catch (e) { toast(errMsg(e)); }
+  },
+  asec: d => { S.asec = d.k; if (d.k === "usage") loadUsage(); render(); },
+  async createUser() {
+    const name = $("#u_name").value.trim(), email = $("#u_email").value.trim().toLowerCase(), pw = $("#u_pw").value;
+    if (!name) return toast("Enter the name");
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast("Enter a valid email");
+    if (pw.length < MIN_PW) return toast(`Password must be at least ${MIN_PW} characters`);
+    try {
+      const c = await createUserWithEmailAndPassword(secAuth, email, pw);
+      await signOut(secAuth);
+      if (await wr(() => setDoc(doc(db, "users", c.user.uid), { name, email, role: $("#u_role").value, branchId: $("#u_branch").value || null, active: true, created: nowIso() }))) {
+        ["u_name", "u_email", "u_pw"].forEach(i => $("#" + i).value = ""); toast("User created");
+      }
+    } catch (e) { toast(errMsg(e)); }
+  },
+  async resetPw(d) { try { await sendPasswordResetEmail(auth, uById(d.id).email); toast("Reset email sent"); } catch (e) { toast(errMsg(e)); } },
+  async toggleActive(d) {
+    const u = uById(d.id); const act = u.active === false;
+    if (!act && !confirm(`Deactivate ${u.name}? They will no longer be able to log in.`)) return;
+    if (await wr(() => updateDoc(doc(db, "users", u.id), { active: act }))) toast(act ? "User activated" : "User deactivated");
+  },
+  async createBranch() {
+    const n = $("#b_name").value.trim();
+    if (n.length < 2) return toast("Enter the branch name");
+    if (S.branches.some(b => b.name.toLowerCase() === n.toLowerCase())) return toast("This branch already exists");
+    if (await wr(() => addDoc(collection(db, "branches"), { name: n, created: nowIso() }))) { $("#b_name").value = ""; toast("Branch created"); }
+  },
+  async delBranch(d) {
+    const b = S.branches.find(x => x.id === d.id);
+    if (!confirm(`Delete branch '${b.name}'? Users stay but become unassigned.`)) return;
+    const members = S.users.filter(u => u.branchId === b.id);
+    await wr(async () => { const bt = writeBatch(db); members.forEach(u => bt.update(doc(db, "users", u.id), { branchId: null })); bt.delete(doc(db, "branches", b.id)); await bt.commit(); }, members.length + 1);
+  },
+  async loadAll() {
+    try { S.adminTasks = docs(await rd(query(collection(db, "tasks"), orderBy("createdAt", "desc"), limit(300)))); render(); } catch (e) { toast(errMsg(e)); }
+  },
+  refreshUsage: () => loadUsage()
+};
+const CHG = {
+  filter: v => { S.filter = v; render(); },
+  mem: v => { S.mem = v; render(); },
+  setRole: (v, d) => wr(() => updateDoc(doc(db, "users", d.id), { role: v })),
+  setBranch: (v, d) => wr(() => updateDoc(doc(db, "users", d.id), { branchId: v || null }))
+};
+document.addEventListener("click", e => { const t = e.target.closest("[data-act]"); if (t) ACT[t.dataset.act]?.(t.dataset, t); });
+document.addEventListener("change", e => { const t = e.target.closest("[data-chg]"); if (t) CHG[t.dataset.chg]?.(t.value, t.dataset); });
+document.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !S.me && e.target.tagName === "INPUT") (S.mode === "setup" ? ACT.setupGo : ACT.login)();
+});
+</script>
+</body>
+</html>

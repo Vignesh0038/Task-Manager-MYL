@@ -1,0 +1,50 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // CHANGE THIS to the same admin email you put in public/index.html
+    function adminEmail() { return request.auth.token.email == 'j.vignesh112711@gmail.com'; }
+
+    function signedIn() { return request.auth != null; }
+    function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function active() { return signedIn() && profile().active == true; }
+    function isAdmin() { return active() && profile().role == 'admin'; }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || active());
+      // first admin can create their own profile; afterwards only admins create/update users
+      allow create: if (signedIn() && request.auth.uid == uid && adminEmail() && request.resource.data.role == 'admin')
+                    || isAdmin();
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /branches/{id} {
+      allow read: if active();
+      allow write: if isAdmin();
+    }
+
+    match /tasks/{id} {
+      allow read: if active() && (
+        isAdmin()
+        || request.auth.uid in resource.data.participants
+        || (profile().role == 'manager' && profile().branchId in resource.data.branchIds)
+      );
+      allow create: if active()
+        && request.resource.data.createdBy == request.auth.uid
+        && request.auth.uid in request.resource.data.participants;
+      allow update: if active()
+        && (isAdmin() || request.auth.uid in resource.data.participants)
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.participants == resource.data.participants;
+      allow delete: if active() && (isAdmin() || resource.data.createdBy == request.auth.uid);
+    }
+
+    // daily usage counters (used for the free-limit warnings)
+    match /usage/{day} {
+      allow read: if isAdmin();
+      allow create, update: if active()
+        && request.resource.data.keys().hasOnly(['reads', 'writes', 'deletes', 'alerted']);
+    }
+  }
+}
