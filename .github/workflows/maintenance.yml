@@ -7,8 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "cleanup or usage"
+        description: "cleanup, usage or resetpw"
         default: "cleanup"
+      userid:
+        description: "resetpw only: 4-digit User ID"
+        default: ""
+      newpass:
+        description: "resetpw only: new password (6+ characters)"
+        default: ""
 
 jobs:
   run:
@@ -26,4 +32,6 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
           MODE: ${{ github.event.inputs.mode || (github.event.schedule == '30 21 * * *' && 'cleanup') || 'usage' }}
-        run: python backup/job.py "$MODE"
+          USERID: ${{ github.event.inputs.userid }}
+          NEWPASS: ${{ github.event.inputs.newpass }}
+        run: python backup/job.py "$MODE" "$USERID" "$NEWPASS"

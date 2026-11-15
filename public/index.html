@@ -26,7 +26,7 @@ body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;bac
  .main{padding-bottom:30px}
 }
 .card{background:#fff;border-radius:14px;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,.08);display:flex;flex-direction:column;gap:8px}
-.card.click{cursor:pointer}.card.click:hover{background:#fafafa}
+.card.click{cursor:pointer;transition:transform .1s,box-shadow .1s}.card.click:hover{box-shadow:0 4px 14px rgba(0,0,0,.12)}.card.click:active{transform:scale(.99)}
 .row{display:flex;gap:8px;align-items:center}.row.wrap{flex-wrap:wrap}
 .grow{flex:1}
 h2{margin:0;font-size:22px}h3{margin:6px 0 0;font-size:18px}
@@ -34,6 +34,7 @@ h2{margin:0;font-size:22px}h3{margin:6px 0 0;font-size:18px}
 .muted{color:var(--mut)}.sm{font-size:12px}
 .badge{color:#fff;border-radius:12px;padding:3px 10px;font-size:11px;font-weight:700;display:inline-block}
 input,select,textarea{font:inherit;padding:10px 12px;border:1px solid #d1d5db;border-radius:10px;background:#fff;min-width:0}
+input:focus,select:focus,textarea:focus{outline:2px solid #c7d2fe;border-color:var(--p)}
 textarea{min-height:80px;resize:vertical}
 .f{display:flex;flex-direction:column;gap:4px;flex:1;min-width:180px}
 .f label{font-size:12px;color:var(--mut)}
@@ -50,11 +51,25 @@ textarea{min-height:80px;resize:vertical}
 .center{text-align:center}
 .hist{font-size:12px;color:var(--mut)}
 button.lnk{background:none;border:0;color:var(--p);cursor:pointer;font:inherit;padding:4px}
-#toast{position:fixed;left:50%;bottom:80px;transform:translateX(-50%);background:#111827;color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:20;max-width:90vw}
+.plist{display:flex;flex-direction:column;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden}
+.plist:empty{display:none}
+.pitem{padding:10px 12px;cursor:pointer;display:flex;justify-content:space-between;border-bottom:1px solid #f3f4f6;background:#fff}
+.pitem:last-child{border-bottom:0}.pitem:hover{background:#eef2ff}
+.chip{display:inline-flex;gap:6px;align-items:center;background:#eef2ff;color:#3730a3;border-radius:20px;padding:6px 12px;font-weight:600;font-size:14px}
+.quick{display:flex;gap:6px;flex-wrap:wrap}
+.quick button{border:1px solid #d1d5db;background:#fff;border-radius:20px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer}
+.quick button:hover{background:#f3f4f6}
+#upd{position:fixed;top:0;left:0;right:0;z-index:50}
+#upd .ub{background:#111827;color:#fff;padding:10px 14px;display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap;font-size:14px}
+#upd .ub .btn{padding:6px 14px}
+#upd.force{inset:0;background:rgba(17,24,39,.92);display:flex;align-items:center;justify-content:center;padding:20px}
+#upd.force .ub{flex-direction:column;border-radius:16px;padding:26px;max-width:340px;text-align:center;background:#fff;color:#111827}
+#toast{position:fixed;left:50%;bottom:80px;transform:translateX(-50%);background:#111827;color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:60;max-width:90vw}
 #toast.show{opacity:1}
 </style>
 </head>
 <body>
+<div id="upd"></div>
 <div id="app"><div class="auth center muted">Loading…</div></div>
 <div id="toast"></div>
 
@@ -67,20 +82,11 @@ import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager
          getDocs, setDoc, addDoc, updateDoc, deleteDoc, query, where, orderBy, limit, onSnapshot,
          arrayUnion, increment, writeBatch }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { firebaseConfig, ADMIN_EMAIL } from "./config.js";
 
-/* ====================== 1. EDIT THESE TWO THINGS ====================== */
-const firebaseConfig = {
-  apiKey: "AIzaSyC9le58rq67g0z50R2LGi2NAodzp7tUO5M",
-  authDomain: "task-manager-myl.firebaseapp.com",
-  projectId: "task-manager-myl",
-  appId: "1:1019954426444:web:87b7739043f97f9b15fae9"
-};
-const ADMIN_EMAIL = "j.vignesh112711@gmail.com";   // must be the same as in firestore.rules
-/* ====================================================================== */
-
-const APP_VERSION = "2.0.0";
+const APP_VERSION = "2.1.0";   // release.js changes this line automatically
 const LIMITS = { reads: 50000, writes: 20000, deletes: 20000 };   // Firebase Spark daily limits
-const WARN = 0.7;                                                 // warn admin at 70 %
+const WARN = 0.7;
 const STATUSES = ["Pending", "In Progress", "On Hold", "Rework", "Completed", "Rejected"];
 const PRIORITIES = ["Low", "Medium", "High"];
 const S_COL = { "Pending": "#F59E0B", "In Progress": "#2563EB", "On Hold": "#6B7280", "Rework": "#7C3AED",
@@ -88,36 +94,38 @@ const S_COL = { "Pending": "#F59E0B", "In Progress": "#2563EB", "On Hold": "#6B7
 const P_COL = { Low: "#16A34A", Medium: "#F59E0B", High: "#DC2626" };
 const R_COL = { admin: "#4F46E5", manager: "#0D9488", user: "#6B7280" };
 const ROLES = ["user", "manager", "admin"];
-const MIN_PW = 6;
+const MIN_PW = 6;                       // Firebase minimum
+const ALIAS = "@tm.local";              // 4-digit User ID 1001 logs in as 1001@tm.local behind the scenes
+const DONE = ["Completed", "Rejected"];
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const secAuth = getAuth(initializeApp(firebaseConfig, "secondary"));   // used only to create users
 const db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
 
-/* ---------- small helpers ---------- */
+/* ---------- helpers ---------- */
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const nowIso = () => new Date().toISOString();
+const todayStr = () => new Date().toLocaleDateString("en-CA");
 const fmt = iso => { if (!iso) return "-"; const d = new Date(iso); const p = n => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
 const pacificDay = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date());
 let toastT;
-function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 3500); }
-const errMsg = e => ({ "auth/email-already-in-use": "This email already has an account", "auth/invalid-email": "Invalid email",
+function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 3800); }
+const errMsg = e => ({ "auth/email-already-in-use": "This User ID / email already exists", "auth/invalid-email": "Invalid ID or email",
   "auth/weak-password": `Password must be at least ${MIN_PW} characters`, "auth/wrong-password": "Wrong password",
-  "auth/invalid-credential": "Invalid email or password", "auth/too-many-requests": "Too many attempts - try later",
+  "auth/invalid-credential": "Wrong User ID or password", "auth/too-many-requests": "Too many attempts - try later",
   "permission-denied": "Not allowed" }[e.code] || e.message || String(e));
 
-/* ---------- Firestore usage counter (keeps us inside the free limits) ---------- */
+/* ---------- Firestore usage counter ---------- */
 const UC = { r: 0, w: 0, d: 0 };
 const track = (k, n = 1) => { UC[k] += n; };
 async function flushUsage() {
   if (!S.me || !(UC.r + UC.w + UC.d)) return;
   const s = { ...UC }; UC.r = UC.w = UC.d = 0;
-  try {
-    await setDoc(doc(db, "usage", pacificDay()), { reads: increment(s.r), writes: increment(s.w + 1), deletes: increment(s.d) }, { merge: true });
-  } catch (e) { UC.r += s.r; UC.w += s.w; UC.d += s.d; }
+  try { await setDoc(doc(db, "usage", pacificDay()), { reads: increment(s.r), writes: increment(s.w + 1), deletes: increment(s.d) }, { merge: true }); }
+  catch (e) { UC.r += s.r; UC.w += s.w; UC.d += s.d; }
 }
 setInterval(flushUsage, 5 * 60 * 1000);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushUsage(); });
@@ -129,19 +137,42 @@ async function wr(fn, n = 1) {
   catch (e) { console.error(e); toast("Failed: " + errMsg(e)); return false; }
 }
 
+/* ---------- app update check (web, APK and EXE all show this) ---------- */
+async function checkVersion() {
+  try {
+    const r = await fetch("/version.json?t=" + Date.now(), { cache: "no-store" });
+    const v = await r.json();
+    if (v.version && v.version !== APP_VERSION) showUpdate(v); else $("#upd").innerHTML = "";
+  } catch (e) { /* offline - ignore */ }
+}
+function showUpdate(v) {
+  const box = $("#upd");
+  box.className = v.force ? "force" : "";
+  box.innerHTML = `<div class="ub"><div>🔔 <b>New version ${esc(v.version)} is available</b>${v.notes ? `<br><span class="sm">${esc(v.notes)}</span>` : ""}</div>
+    <button class="btn" data-act="doUpdate">Update now</button></div>`;
+}
+async function doUpdate() {
+  try { for (const k of await caches.keys()) await caches.delete(k); } catch (e) { }
+  location.replace(location.pathname + "?v=" + Date.now());
+}
+checkVersion();
+setInterval(checkVersion, 10 * 60 * 1000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkVersion(); });
+
 /* ---------- state ---------- */
-const S = { me: null, tab: "mine", view: "list", task: null, parent: null, filter: "All", mem: "All", asec: "users",
+const S = { me: null, tab: "mine", view: "list", task: null, parent: null, filter: "All", mem: "All", q: "", pick: null, asec: "users",
   users: [], branches: [], tasks: [], btasks: [], adminTasks: null, usage: null, cur: undefined, subs: [], crumbs: [],
   mode: "login", settingUp: false, ut: null };
 const unsub = {};
 const uById = id => S.users.find(u => u.id === id);
 const uname = id => uById(id)?.name || "?";
+const ulabel = id => { const u = uById(id); return u ? `${u.name} (${u.userId || "admin"})` : "?"; };
 const bname = id => S.branches.find(b => b.id === id)?.name || null;
 const isAdmin = () => S.me?.role === "admin";
 const isMgr = () => S.me?.role === "manager";
 const hist = (action, note) => ({ ts: nowIso(), by: S.me.id, byName: S.me.name, action, note: note || "" });
 const sortTasks = a => [...a].sort((x, y) => {
-  const cx = ["Completed", "Rejected"].includes(x.status) ? 1 : 0, cy = ["Completed", "Rejected"].includes(y.status) ? 1 : 0;
+  const cx = DONE.includes(x.status) ? 1 : 0, cy = DONE.includes(y.status) ? 1 : 0;
   return cx - cy || (y.createdAt || "").localeCompare(x.createdAt || ""); });
 
 function listen(key, q, cb, onErr) {
@@ -159,13 +190,13 @@ async function boot(u) {
   try {
     const s = await rdoc(doc(db, "users", u.uid));
     if (!s.exists() || s.data().active === false) { toast("Your account is not active. Contact the admin."); await signOut(auth); return; }
-    S.me = { id: u.uid, ...s.data() }; S.tab = "mine"; S.view = "list"; S.filter = "All"; S.mem = "All";
+    S.me = { id: u.uid, ...s.data() }; S.tab = "mine"; S.view = "list"; S.filter = "All"; S.mem = "All"; S.q = "";
     startSession(); render();
   } catch (e) { toast("Cannot load profile: " + errMsg(e)); await signOut(auth); }
 }
 function startSession() {
   listen("users", collection(db, "users"), snap => {
-    S.users = docs(snap).sort((a, b) => a.name.localeCompare(b.name));
+    S.users = docs(snap).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     const m = uById(S.me.id);
     if (m) { if (m.active === false) { logout("Your account was deactivated"); return; } S.me = m; }
     refresh();
@@ -189,7 +220,7 @@ onAuthStateChanged(auth, async u => {
 
 /* ---------- usage (admin) ---------- */
 async function loadUsage() {
-  try { const s = await rdoc(doc(db, "usage", pacificDay())); S.usage = s.exists() ? s.data() : {}; refresh(); } catch (e) { /* ignore */ }
+  try { const s = await rdoc(doc(db, "usage", pacificDay())); S.usage = s.exists() ? s.data() : {}; refresh(); } catch (e) { }
 }
 const usedOf = k => (S.usage?.[k] || 0) + UC[{ reads: "r", writes: "w", deletes: "d" }[k]];
 const usageAlerts = () => Object.keys(LIMITS).filter(k => usedOf(k) / LIMITS[k] >= WARN);
@@ -200,10 +231,12 @@ const opt = (v, l, sel) => `<option value="${esc(v)}" ${String(sel) === String(v
 const tile = (n, l, c) => `<div class="tile"><b style="color:${c}">${n}</b><span class="muted sm">${l}</span></div>`;
 
 function taskCard(t) {
+  const over = t.due && !DONE.includes(t.status) && t.due < todayStr();
   const meta = [badge(t.status, S_COL[t.status] || "#6B7280"), badge(t.priority, P_COL[t.priority] || "#6B7280")];
   if (t.reworkCount) meta.push(badge("Reworked ×" + t.reworkCount, "#9333EA"));
+  if (over) meta.push(badge("Overdue", "#B91C1C"));
   if (t.due) meta.push(`<span class="muted sm">Due ${esc(t.due)}</span>`);
-  return `<div class="card click" data-act="open" data-id="${t.id}">
+  return `<div class="card click" style="border-left:5px solid ${P_COL[t.priority] || "#9CA3AF"}" data-act="open" data-id="${t.id}">
     <div class="title">${t.parentId ? "↳ " : ""}${esc(t.title)}</div>
     <div class="muted sm">👤 ${esc(uname(t.createdBy))} → ${esc(uname(t.assignedTo))}</div>
     <div class="row wrap">${meta.join("")}</div></div>`;
@@ -211,55 +244,69 @@ function taskCard(t) {
 const statTiles = rows => `<div class="card"><div class="tiles">${["Pending", "In Progress", "Rework", "Completed"]
   .map(s => tile(rows.filter(r => r.status === s).length, s, S_COL[s])).join("")}</div></div>`;
 const filterSel = () => `<select data-chg="filter">${["All", ...STATUSES].map(s => opt(s, s, S.filter)).join("")}</select>`;
+const searchBox = () => `<input id="q" data-inp="q" placeholder="🔍 Search title or name…" value="${esc(S.q)}" style="width:100%">`;
+const matches = t => { const q = S.q.trim().toLowerCase(); return !q || [t.title, uname(t.createdBy), uname(t.assignedTo)].join(" ").toLowerCase().includes(q); };
 const retention = `<div class="muted sm center">Completed tasks are backed up to the admin's email and removed 7 days after completion.</div>`;
 
 /* ---------- views ---------- */
 function authView() {
   const m = S.mode;
-  const f = (id, label, type = "text") => `<div class="f"><label>${label}</label><input id="${id}" type="${type}" autocomplete="${type === "password" ? "current-password" : "on"}"></div>`;
+  const f = (id, label, type = "text", ph = "") => `<div class="f"><label>${label}</label><input id="${id}" type="${type}" placeholder="${ph}" autocomplete="${type === "password" ? "current-password" : "username"}" ${id === "a_email" && m === "login" ? 'inputmode="text"' : ""}></div>`;
   return `<div class="auth"><div class="card">
     <div class="center" style="font-size:48px">✅</div><h2 class="center">Task Manager</h2>
     <div class="center muted">Assign. Delegate. Complete.</div>
     ${m === "setup" ? f("a_name", "Admin full name") : ""}
-    ${f("a_email", "Email")}${f("a_pw", "Password", "password")}
+    ${m === "setup" ? f("a_email", "Admin Gmail", "email") : f("a_email", "User ID (4 digits)", "text", "e.g. 1001")}
+    ${f("a_pw", "Password", "password")}
     ${m === "setup"
       ? `<button class="btn" data-act="setupGo">Create admin account</button><button class="lnk" data-act="mode" data-m="login">Back to login</button>`
       : `<button class="btn" data-act="login">Login</button>
-         <button class="lnk" data-act="forgot">Forgot password?</button>
+         <button class="lnk muted sm" data-act="forgot">Forgot password?</button>
          <button class="lnk muted sm" data-act="mode" data-m="setup">First-time admin setup</button>`}
-    <div class="center muted sm">v${APP_VERSION}</div></div></div>`;
+    <div class="center muted sm">v${APP_VERSION}${m === "login" ? " • Admin can also type the Gmail address" : ""}</div></div></div>`;
 }
 
 function listView(kind) {
   const rows = sortTasks(S.tasks.filter(t => kind === "mine" ? t.assignedTo === S.me.id : t.createdBy === S.me.id));
-  const shown = rows.filter(t => S.filter === "All" || t.status === S.filter);
+  const shown = rows.filter(t => (S.filter === "All" || t.status === S.filter) && matches(t));
   return `<div class="row"><h2 class="grow">${kind === "mine" ? "Assigned to me" : "Assigned by me"}</h2>${filterSel()}</div>
-    ${statTiles(rows)}
-    ${shown.map(taskCard).join("") || `<div class="card center muted">No tasks here yet.</div>`}${retention}`;
+    ${searchBox()}${statTiles(rows)}
+    ${shown.map(taskCard).join("") || `<div class="card center muted">No tasks found.</div>`}${retention}`;
 }
 
+const chip = id => id ? `<span class="chip">👤 ${esc(ulabel(id))} <button class="lnk" data-act="unpick" title="Change">✕</button></span>` : `<span class="muted sm">Nobody selected</span>`;
 function formView() {
-  const active = S.users.filter(u => u.active !== false);
-  const pt = S.parent ? (S.tasks.find(t => t.id === S.parent) || S.cur) : null;
+  const pt = S.parent ? S.cur : null;
   return `<h2>${S.parent ? "New subtask" : "New task"}</h2>
     ${pt ? `<div class="muted">Under: ${esc(pt.title)}</div>` : ""}
     <div class="card">
       <div class="f"><label>Title</label><input id="f_title"></div>
       <div class="f"><label>Description</label><textarea id="f_desc"></textarea></div>
+      <div class="f"><label>Assign to - search by name or User ID</label>
+        <div id="f_sel">${chip(S.pick)}</div>
+        <input id="f_q" data-inp="pick" placeholder="Type name or ID…" autocomplete="off">
+        <div id="f_list" class="plist"></div></div>
       <div class="row wrap">
-        <div class="f"><label>Assign to</label><select id="f_who"><option value="">- select -</option>${active.map(u => opt(u.id, `${u.name} (${u.email})`)).join("")}</select></div>
         <div class="f"><label>Priority</label><select id="f_pri">${PRIORITIES.map(p => opt(p, p, "Medium")).join("")}</select></div>
         <div class="f"><label>Due date (optional)</label><input id="f_due" type="date"></div>
       </div>
       <div class="row"><button class="btn" id="saveBtn" data-act="saveTask">Assign</button><button class="btn o" data-act="cancelForm">Cancel</button></div>
     </div>`;
 }
+function fillPickList() {
+  const el = $("#f_list"); if (!el) return;
+  const q = ($("#f_q").value || "").trim().toLowerCase();
+  const list = S.users.filter(u => u.active !== false && (!q || (u.name || "").toLowerCase().includes(q) || (u.userId || "").includes(q)))
+    .slice(0, 8);
+  el.innerHTML = list.map(u => `<div class="pitem" data-act="pick" data-id="${u.id}"><span>${esc(u.name)}</span><span class="muted">${esc(u.userId || "admin")}${bname(u.branchId) ? " • " + esc(bname(u.branchId)) : ""}</span></div>`).join("")
+    || `<div class="pitem muted">No match</div>`;
+}
 
 function accountView() {
   const u = S.me;
   const f = (id, l) => `<div class="f"><label>${l}</label><input id="${id}" type="password" autocomplete="new-password"></div>`;
   return `<h2>My account</h2>
-    <div class="card"><div class="title">${esc(u.name)}</div><div class="muted">${esc(u.email)}</div>
+    <div class="card"><div class="title">${esc(u.name)}</div><div class="muted">User ID: ${esc(u.userId || "admin")}</div>
       <div class="muted">Role: ${esc(u.role)}</div><div class="muted">Branch: ${esc(bname(u.branchId) || "Not assigned")}</div></div>
     <div class="card"><h3>Change password</h3>${f("c_cur", "Current password")}${f("c_new", "New password")}${f("c_con", "Confirm new password")}
       <div><button class="btn" data-act="changePw">Change password</button></div></div>`;
@@ -272,22 +319,26 @@ function detailView() {
   if (t === null) return back + `<div class="card center muted">Task not found, deleted, or you have no access.</div>`;
   const me = S.me.id, can = isAdmin() || (t.participants || []).includes(me);
   const bc = S.crumbs.length ? `<div class="row wrap">${S.crumbs.map(c => `<button class="lnk" data-act="open" data-id="${c.id}">${esc(c.title)} ›</button>`).join("")}</div>` : "";
-  const info = `<div class="card"><h2>${esc(t.title)}</h2>
+  const doneSubs = S.subs.filter(s => s.status === "Completed").length;
+  const info = `<div class="card" style="border-left:5px solid ${P_COL[t.priority] || "#9CA3AF"}"><h2>${esc(t.title)}</h2>
     <div class="row wrap">${badge(t.status, S_COL[t.status] || "#6B7280")}${badge(t.priority, P_COL[t.priority] || "#6B7280")}${t.reworkCount ? badge("Reworked ×" + t.reworkCount, "#9333EA") : ""}</div>
     <div>${esc(t.description || "No description")}</div><hr style="width:100%;border:0;border-top:1px solid #e5e7eb">
-    <div class="sm">Assigned by: ${esc(uname(t.createdBy))}</div><div class="sm">Assigned to: ${esc(uname(t.assignedTo))}</div>
+    <div class="sm">Assigned by: ${esc(ulabel(t.createdBy))}</div><div class="sm">Assigned to: ${esc(ulabel(t.assignedTo))}</div>
     <div class="sm">Created: ${fmt(t.createdAt)} &nbsp; Due: ${esc(t.due || "-")}</div>
     ${t.completedAt ? `<div class="sm" style="color:#16A34A">Completed: ${fmt(t.completedAt)} (auto-removed 7 days after this)</div>` : ""}
     ${t.remarks ? `<div class="sm muted">Last remark: ${esc(t.remarks)}</div>` : ""}</div>`;
-  const upd = can ? `<div class="card"><div class="row wrap">
-      <div class="f"><label>Update status</label><select id="st">${STATUSES.map(s => opt(s, s, t.status)).join("")}</select></div>
-      <div class="f" style="flex:2"><label>Remark / reason (optional)</label><input id="remark"></div></div>
+  const upd = can ? `<div class="card">
+      <div class="quick"><button data-act="quick" data-s="In Progress">▶ Start</button><button data-act="quick" data-s="On Hold">⏸ Hold</button>
+        <button data-act="quick" data-s="Rework">↩ Rework</button><button data-act="quick" data-s="Completed">✔ Complete</button></div>
+      <div class="row wrap">
+      <div class="f"><label>Status</label><select id="st">${STATUSES.map(s => opt(s, s, t.status)).join("")}</select></div>
+      <div class="f" style="flex:2"><label>Remark / reason (required for Rework)</label><input id="remark"></div></div>
       <div class="row wrap"><button class="btn" data-act="updateStatus">Update</button>
         <button class="btn g" data-act="newSub">Assign subtask</button>
         ${isAdmin() || me === t.createdBy ? `<button class="btn r" data-act="delTask">Delete task</button>` : ""}</div></div>` : "";
   const hs = [...(t.history || [])].reverse().map(h => `<div class="hist">${fmt(h.ts)} • ${esc(h.byName || uname(h.by))} • ${esc(h.action)}${h.note ? " – " + esc(h.note) : ""}</div>`).join("");
   return `${back}${bc}${info}${upd}
-    <h3>Subtasks (${S.subs.length})</h3>${sortTasks(S.subs).map(taskCard).join("") || `<div class="muted">No subtasks</div>`}
+    <h3>Subtasks (${doneSubs}/${S.subs.length} done)</h3>${sortTasks(S.subs).map(taskCard).join("") || `<div class="muted">No subtasks</div>`}
     <h3>History</h3>${hs}`;
 }
 
@@ -295,13 +346,14 @@ function branchView() {
   const bid = S.me.branchId;
   if (!bname(bid)) return `<h2>My branch</h2><div class="card muted">You are not assigned to a branch yet. Ask the admin.</div>`;
   const members = S.users.filter(u => u.branchId === bid);
-  const shown = sortTasks(S.btasks).filter(t => (S.filter === "All" || t.status === S.filter) &&
+  const shown = sortTasks(S.btasks).filter(t => (S.filter === "All" || t.status === S.filter) && matches(t) &&
     (S.mem === "All" || t.assignedTo === S.mem || t.createdBy === S.mem));
   return `<h2>Branch: ${esc(bname(bid))}</h2><div class="muted">${members.length} member(s) • ${S.btasks.length} task(s)</div>
     <div class="row wrap">${filterSel()}<select data-chg="mem">${opt("All", "All members", S.mem)}${members.map(m => opt(m.id, m.name, S.mem)).join("")}</select></div>
-    ${statTiles(S.btasks)}${shown.map(taskCard).join("") || `<div class="card center muted">No tasks found.</div>`}`;
+    ${searchBox()}${statTiles(S.btasks)}${shown.map(taskCard).join("") || `<div class="card center muted">No tasks found.</div>`}`;
 }
 
+const nextUserId = () => { const n = S.users.map(u => parseInt(u.userId, 10)).filter(x => x >= 1000 && x < 9999); return String(Math.max(1000, ...n) + 1); };
 function adminView() {
   const sec = S.asec;
   const tabs = `<div class="row wrap">${[["users", "👥 Users"], ["branches", "🏢 Branches"], ["tasks", "📋 All tasks"], ["usage", "📊 Usage"]]
@@ -311,23 +363,23 @@ function adminView() {
   let body = "";
   if (sec === "users") {
     const branchOpts = sel => opt("", "- No branch -", sel || "") + S.branches.map(b => opt(b.id, b.name, sel || "")).join("");
-    const f = (id, l, t = "text") => `<div class="f"><label>${l}</label><input id="${id}" type="${t}"></div>`;
+    const f = (id, l, t = "text", v = "") => `<div class="f"><label>${l}</label><input id="${id}" type="${t}" value="${esc(v)}"></div>`;
     body = `<div class="card"><h3>Create user</h3>
-      <div class="row wrap">${f("u_name", "Full name")}${f("u_email", "Email", "email")}</div>
-      <div class="row wrap">${f("u_pw", "Temporary password (min " + MIN_PW + ")", "text")}
+      <div class="row wrap">${f("u_name", "Full name (must be unique)")}${f("u_id", "User ID (4 digits)", "text", nextUserId())}</div>
+      <div class="row wrap">${f("u_pw", "Password (min " + MIN_PW + ")", "text")}
         <div class="f"><label>Role</label><select id="u_role">${ROLES.map(r => opt(r, r, "user")).join("")}</select></div>
         <div class="f"><label>Branch</label><select id="u_branch">${branchOpts("")}</select></div></div>
       <div><button class="btn" data-act="createUser">Create user</button></div>
-      <div class="muted sm">Tip: after creating, use "Send reset email" so the user sets their own password.</div></div>
+      <div class="muted sm">Give the user their User ID + password. They can change the password in Account.</div></div>
       <h3>Users (${S.users.length})</h3>` +
       S.users.map(x => {
         const self = x.id === S.me.id;
-        return `<div class="card"><div class="row wrap"><div class="grow"><b>${esc(x.name)}</b><div class="muted sm">${esc(x.email)}</div></div>
+        return `<div class="card"><div class="row wrap"><div class="grow"><b>${esc(x.name)}</b><div class="muted sm">ID: ${esc(x.userId || "admin (Gmail)")}</div></div>
           ${badge(x.role, R_COL[x.role] || "#6B7280")}${bname(x.branchId) ? badge(bname(x.branchId), "#7C3AED") : ""}${x.active === false ? badge("inactive", "#DC2626") : ""}</div>
           ${self ? "" : `<div class="row wrap">
             <select data-chg="setRole" data-id="${x.id}">${ROLES.map(r => opt(r, r, x.role)).join("")}</select>
             <select data-chg="setBranch" data-id="${x.id}">${branchOpts(x.branchId)}</select>
-            <button class="btn o s" data-act="resetPw" data-id="${x.id}">Send reset email</button>
+            <button class="btn o s" data-act="resetHelp" data-id="${x.id}">Reset password</button>
             <button class="btn ${x.active === false ? "g" : "r"} s" data-act="toggleActive" data-id="${x.id}">${x.active === false ? "Activate" : "Deactivate"}</button></div>`}</div>`;
       }).join("");
   } else if (sec === "branches") {
@@ -347,6 +399,7 @@ function adminView() {
       return `<div><div class="row"><b class="grow">${k}</b><span class="muted sm">${u.toLocaleString()} / ${LIMITS[k].toLocaleString()} (${p.toFixed(1)}%)</span></div><div class="bar"><i style="width:${p}%;background:${c}"></i></div></div>`; }).join("");
     body = `<div class="card"><h3>Firebase usage today (estimate)</h3>${bars}
       <div class="muted sm">Counted by this app (resets at midnight Pacific time). The Firebase console shows exact figures. You also get an email at 70% and 90%.</div>
+      <div class="muted sm">App version: v${APP_VERSION}</div>
       <div><button class="btn o s" data-act="refreshUsage">Refresh</button></div></div>`;
   }
   return `<h2>Admin panel</h2>${tabs}${banner}${body}`;
@@ -396,7 +449,7 @@ const refresh = () => { if (S.me && ["list", "detail", "admin", "branch"].includ
 function leaveDetail() { stopListen("detail", "subs"); S.cur = undefined; S.subs = []; S.crumbs = []; }
 function nav(k) {
   leaveDetail();
-  S.tab = k; S.view = viewForTab(k); S.parent = null; S.filter = "All"; S.mem = "All";
+  S.tab = k; S.view = viewForTab(k); S.parent = null; S.filter = "All"; S.mem = "All"; S.q = ""; S.pick = null;
   if (k !== "branch") stopListen("branch");
   if (k === "branch" && S.me.branchId) {
     S.btasks = [];
@@ -429,27 +482,29 @@ async function loadCrumbs(pid) {
 
 /* ---------- actions ---------- */
 const ACT = {
+  doUpdate,
   mode: d => { S.mode = d.m; render(); },
   async login() {
-    const e = $("#a_email").value.trim(), p = $("#a_pw").value;
-    if (!e || !p) return toast("Enter email and password");
+    let e = $("#a_email").value.trim(), p = $("#a_pw").value;
+    if (!e || !p) return toast("Enter User ID and password");
+    if (!e.includes("@")) { if (!/^\d{4}$/.test(e)) return toast("User ID must be 4 digits"); e += ALIAS; }
     try { await signInWithEmailAndPassword(auth, e, p); } catch (x) { toast(errMsg(x)); }
   },
   async forgot() {
-    const e = $("#a_email").value.trim(); if (!e) return toast("Type your email first");
+    const e = $("#a_email").value.trim();
+    if (!e.includes("@")) return toast("Forgot your password? Ask the admin to reset it.");
     try { await sendPasswordResetEmail(auth, e); toast("If this email is registered, a reset link was sent"); } catch (x) { toast(errMsg(x)); }
   },
   async setupGo() {
     const name = $("#a_name").value.trim(), e = $("#a_email").value.trim().toLowerCase(), p = $("#a_pw").value;
     if (!name) return toast("Enter your name");
-    if (e !== ADMIN_EMAIL.toLowerCase()) return toast("This email is not the admin email set in the app");
+    if (e !== ADMIN_EMAIL.toLowerCase()) return toast("This email is not the admin email set in config.js");
     if (p.length < MIN_PW) return toast(`Password must be at least ${MIN_PW} characters`);
     S.settingUp = true;
     try {
       const c = await createUserWithEmailAndPassword(auth, e, p);
-      await setDoc(doc(db, "users", c.user.uid), { name, email: e, role: "admin", branchId: null, active: true, created: nowIso() });
-      track("w");
-      S.settingUp = false; await boot(c.user);
+      await setDoc(doc(db, "users", c.user.uid), { name, nameLower: name.toLowerCase(), userId: "0000", email: e, role: "admin", branchId: null, active: true, created: nowIso() });
+      track("w"); S.settingUp = false; await boot(c.user);
     } catch (x) { S.settingUp = false; toast(errMsg(x)); try { await signOut(auth); } catch { } }
   },
   logout: () => logout(),
@@ -460,27 +515,34 @@ const ACT = {
     if (p) return openTask(p);
     leaveDetail(); S.view = viewForTab(S.tab); render();
   },
-  newSub() { S.parent = S.cur.id; S.view = "form"; render(); },
+  newSub() { S.parent = S.cur.id; S.pick = null; S.view = "form"; render(); },
   cancelForm() { if (S.parent) { const p = S.parent; S.parent = null; openTask(p); } else nav("mine"); },
+  pick(d) { S.pick = d.id; $("#f_sel").innerHTML = chip(S.pick); $("#f_q").value = ""; $("#f_list").innerHTML = ""; },
+  unpick() { S.pick = null; $("#f_sel").innerHTML = chip(null); $("#f_q").focus(); fillPickList(); },
   async saveTask() {
-    const title = $("#f_title").value.trim(), who = $("#f_who").value, due = $("#f_due").value;
+    const title = $("#f_title").value.trim(), who = S.pick, due = $("#f_due").value;
     if (!title) return toast("Title is required");
-    if (!who) return toast("Select a user to assign");
+    if (!who) return toast("Search and select a user to assign");
     const btn = $("#saveBtn"); btn.disabled = true;
+    const par = S.parent && S.cur?.id === S.parent ? S.cur : null;
+    // A subtask is visible to everyone who can see its parent (A -> B -> C: A still sees C's subtask)
+    const participants = [...new Set([...(par?.participants || []), S.me.id, who])];
+    const branchIds = [...new Set([...(par?.branchIds || []), S.me.branchId, uById(who)?.branchId].filter(Boolean))];
     const data = {
       parentId: S.parent || null, title, description: $("#f_desc").value.trim(), createdBy: S.me.id, assignedTo: who,
-      participants: [...new Set([S.me.id, who])], branchIds: [...new Set([S.me.branchId, uById(who)?.branchId].filter(Boolean))],
-      status: "Pending", priority: $("#f_pri").value, due: due || "", remarks: "", createdAt: nowIso(), completedAt: null,
-      reworkCount: 0, history: [hist("Created", "Assigned to " + uname(who))]
+      participants, branchIds, status: "Pending", priority: $("#f_pri").value, due: due || "", remarks: "",
+      createdAt: nowIso(), completedAt: null, reworkCount: 0, history: [hist("Created", "Assigned to " + uname(who))]
     };
     const ok = await wr(() => addDoc(collection(db, "tasks"), data));
     if (!ok) { btn.disabled = false; return; }
     toast(S.parent ? "Subtask assigned" : "Task assigned");
     if (S.parent) { const p = S.parent; S.parent = null; openTask(p); } else nav("by");
   },
+  quick(d) { $("#st").value = d.s; ACT.updateStatus(); },
   async updateStatus() {
     const t = S.cur, ns = $("#st").value, remark = ($("#remark").value || "").trim();
-    if (ns === "Completed" && S.subs.some(s => !["Completed", "Rejected"].includes(s.status))) return toast("Finish all subtasks before completing this task");
+    if (ns === "Rework" && !remark) return toast("Please write the reason for Rework in the remark box");
+    if (ns === "Completed" && S.subs.some(s => !DONE.includes(s.status))) return toast("Finish all subtasks before completing this task");
     const upd = {
       status: ns, remarks: remark || t.remarks || "",
       completedAt: ns === "Completed" ? (t.status === "Completed" && t.completedAt ? t.completedAt : nowIso()) : null,
@@ -515,19 +577,24 @@ const ACT = {
   },
   asec: d => { S.asec = d.k; if (d.k === "usage") loadUsage(); render(); },
   async createUser() {
-    const name = $("#u_name").value.trim(), email = $("#u_email").value.trim().toLowerCase(), pw = $("#u_pw").value;
-    if (!name) return toast("Enter the name");
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast("Enter a valid email");
+    const name = $("#u_name").value.trim().replace(/\s+/g, " "), id = $("#u_id").value.trim(), pw = $("#u_pw").value;
+    if (name.length < 2) return toast("Enter the name");
+    if (!/^\d{4}$/.test(id)) return toast("User ID must be exactly 4 digits");
     if (pw.length < MIN_PW) return toast(`Password must be at least ${MIN_PW} characters`);
+    if (S.users.some(u => (u.name || "").toLowerCase() === name.toLowerCase())) return toast("This name is already used - names must be unique");
+    if (S.users.some(u => u.userId === id)) return toast("This User ID is already used");
     try {
-      const c = await createUserWithEmailAndPassword(secAuth, email, pw);
+      const c = await createUserWithEmailAndPassword(secAuth, id + ALIAS, pw);
       await signOut(secAuth);
-      if (await wr(() => setDoc(doc(db, "users", c.user.uid), { name, email, role: $("#u_role").value, branchId: $("#u_branch").value || null, active: true, created: nowIso() }))) {
-        ["u_name", "u_email", "u_pw"].forEach(i => $("#" + i).value = ""); toast("User created");
+      if (await wr(() => setDoc(doc(db, "users", c.user.uid), { name, nameLower: name.toLowerCase(), userId: id, email: id + ALIAS, role: $("#u_role").value, branchId: $("#u_branch").value || null, active: true, created: nowIso() }))) {
+        $("#u_name").value = ""; $("#u_pw").value = ""; toast(`User created: ID ${id}`);
       }
     } catch (e) { toast(errMsg(e)); }
   },
-  async resetPw(d) { try { await sendPasswordResetEmail(auth, uById(d.id).email); toast("Reset email sent"); } catch (e) { toast(errMsg(e)); } },
+  resetHelp(d) {
+    const u = uById(d.id);
+    alert(`Reset password for ${u.name} (ID ${u.userId}):\n\n1. Open your GitHub repository > Actions\n2. Task Manager maintenance > Run workflow\n3. mode: resetpw   user id: ${u.userId}   new password: (6+ characters)\n4. Run it, then give the user the new password.`);
+  },
   async toggleActive(d) {
     const u = uById(d.id); const act = u.active === false;
     if (!act && !confirm(`Deactivate ${u.name}? They will no longer be able to log in.`)) return;
@@ -558,6 +625,12 @@ const CHG = {
 };
 document.addEventListener("click", e => { const t = e.target.closest("[data-act]"); if (t) ACT[t.dataset.act]?.(t.dataset, t); });
 document.addEventListener("change", e => { const t = e.target.closest("[data-chg]"); if (t) CHG[t.dataset.chg]?.(t.value, t.dataset); });
+document.addEventListener("input", e => {
+  const k = e.target.dataset?.inp;
+  if (k === "q") { S.q = e.target.value; render(true); }
+  if (k === "pick") fillPickList();
+});
+document.addEventListener("focusin", e => { if (e.target.id === "f_q") fillPickList(); });
 document.addEventListener("keydown", e => {
   if (e.key === "Enter" && !S.me && e.target.tagName === "INPUT") (S.mode === "setup" ? ACT.setupGo : ACT.login)();
 });

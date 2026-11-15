@@ -162,6 +162,23 @@ def usage():
         pass
 
 
+def resetpw(user_id, new_pw):
+    """Admin resets a user's password (users have no real email, so the app cannot do this itself)."""
+    from firebase_admin import auth
+    if not (user_id or "").isdigit() or len(user_id) != 4:
+        sys.exit("User ID must be 4 digits")
+    if len(new_pw or "") < 6:
+        sys.exit("Password must be at least 6 characters")
+    found = list(db.collection("users").where("userId", "==", user_id).limit(1).stream())
+    if not found:
+        sys.exit(f"No user with ID {user_id}")
+    auth.update_user(found[0].id, password=new_pw)
+    print(f"Password reset for user {user_id}.")
+
+
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "cleanup"
-    {"cleanup": cleanup, "usage": usage}[mode]()
+    if mode == "resetpw":
+        resetpw(sys.argv[2] if len(sys.argv) > 2 else "", sys.argv[3] if len(sys.argv) > 3 else "")
+    else:
+        {"cleanup": cleanup, "usage": usage}[mode]()
