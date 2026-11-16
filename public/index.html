@@ -84,7 +84,7 @@ import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { firebaseConfig, ADMIN_EMAIL } from "./config.js";
 
-const APP_VERSION = "2.1.2";   // release.js changes this line automatically
+const APP_VERSION = "2.1.3";   // release.js changes this line automatically
 const LIMITS = { reads: 50000, writes: 20000, deletes: 20000 };   // Firebase Spark daily limits
 const WARN = 0.7;
 const STATUSES = ["Pending", "In Progress", "On Hold", "Rework", "Completed", "Rejected"];
@@ -254,7 +254,7 @@ function authView() {
   const f = (id, label, type = "text", ph = "") => `<div class="f"><label>${label}</label><input id="${id}" type="${type}" placeholder="${ph}" autocomplete="${type === "password" ? "current-password" : "username"}" ${id === "a_email" && m === "login" ? 'inputmode="text"' : ""}></div>`;
   return `<div class="auth"><div class="card">
     <div class="center" style="font-size:48px">✅</div><h2 class="center">Task Manager</h2>
-    <div class="center muted">Assign. Delegate. Complete.</div>
+    <div class="center muted">Assign. Delegate. Complete!.</div>
     ${m === "setup" ? f("a_name", "Admin full name") : ""}
     ${m === "setup" ? f("a_email", "Admin Gmail", "email") : f("a_email", "User ID (4 digits)", "text", "e.g. 1001")}
     ${f("a_pw", "Password", "password")}
