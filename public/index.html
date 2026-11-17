@@ -2,18 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#4F46E5">
 <title>Task Manager</title>
 <style>
 :root{--p:#4F46E5;--bg:#F3F4F6;--mut:#6B7280}
 *{box-sizing:border-box}
 body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:#111827}
-.top{background:var(--p);color:#fff;display:flex;align-items:center;gap:10px;padding:8px 14px;position:sticky;top:0;z-index:5}
+.top{background:var(--p);color:#fff;display:flex;align-items:center;gap:10px;padding:calc(8px + env(safe-area-inset-top)) 14px 8px;position:sticky;top:0;z-index:5}
 .top .grow{flex:1}.top .who{font-size:12px;text-align:right}
 .top button{background:transparent;border:0;color:#fff;font-size:20px;cursor:pointer}
 .shell{display:grid;grid-template-columns:1fr;min-height:calc(100vh - 48px)}
-.nav{position:fixed;bottom:0;left:0;right:0;background:#fff;display:flex;border-top:1px solid #e5e7eb;z-index:5}
+.nav{position:fixed;bottom:0;left:0;right:0;background:#fff;display:flex;border-top:1px solid #e5e7eb;z-index:5;padding-bottom:env(safe-area-inset-bottom)}
 .nav button{flex:1;border:0;background:#fff;padding:8px 2px;font-size:11px;color:var(--mut);cursor:pointer}
 .nav button .ic{display:block;font-size:20px}
 .nav button.on{color:var(--p);font-weight:700}
@@ -66,6 +66,12 @@ button.lnk{background:none;border:0;color:var(--p);cursor:pointer;font:inherit;p
 #upd.force .ub{flex-direction:column;border-radius:16px;padding:26px;max-width:340px;text-align:center;background:#fff;color:#111827}
 #toast{position:fixed;left:50%;bottom:80px;transform:translateX(-50%);background:#111827;color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:60;max-width:90vw}
 #toast.show{opacity:1}
+.nbadge{position:absolute;top:-4px;right:-6px;background:#ef4444;color:#fff;border-radius:10px;font-size:10px;padding:1px 5px;font-weight:700;display:none}
+#np{position:fixed;top:0;right:0;bottom:0;width:min(380px,100%);background:#fff;z-index:40;box-shadow:-4px 0 20px rgba(0,0,0,.2);display:flex;flex-direction:column;padding-top:env(safe-area-inset-top)}
+#np .nh{display:flex;gap:8px;align-items:center;padding:12px 14px;border-bottom:1px solid #e5e7eb}
+#np .nl{overflow:auto;flex:1}
+.ni{padding:12px 14px;border-bottom:1px solid #f3f4f6;cursor:pointer;display:flex;flex-direction:column;gap:2px}
+.ni.un{background:#eef2ff;border-left:4px solid var(--p)}
 </style>
 </head>
 <body>
@@ -112,7 +118,7 @@ const fmt = iso => { if (!iso) return "-"; const d = new Date(iso); const p = n 
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
 const pacificDay = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date());
 let toastT;
-function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 3800); }
+function toast(m, ms = 3800) { const t = $("#toast"); t.textContent = m; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), ms); }
 const errMsg = e => ({ "auth/email-already-in-use": "This User ID / email already exists", "auth/invalid-email": "Invalid ID or email",
   "auth/weak-password": `Password must be at least ${MIN_PW} characters`, "auth/wrong-password": "Wrong password",
   "auth/invalid-credential": "Wrong User ID or password", "auth/too-many-requests": "Too many attempts - try later",
@@ -162,7 +168,7 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 /* ---------- state ---------- */
 const S = { me: null, tab: "mine", view: "list", task: null, parent: null, filter: "All", mem: "All", q: "", pick: null, asec: "users",
   users: [], branches: [], tasks: [], btasks: [], adminTasks: null, usage: null, cur: undefined, subs: [], crumbs: [],
-  mode: "login", settingUp: false, ut: null };
+  mode: "login", settingUp: false, ut: null, notifs: [], showN: false, nReady: false, clearedAt: "" };
 const unsub = {};
 const uById = id => S.users.find(u => u.id === id);
 const uname = id => uById(id)?.name || "?";
@@ -195,6 +201,7 @@ async function boot(u) {
   } catch (e) { toast("Cannot load profile: " + errMsg(e)); await signOut(auth); }
 }
 function startSession() {
+  loadNotifs();
   listen("users", collection(db, "users"), snap => {
     S.users = docs(snap).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     const m = uById(S.me.id);
@@ -202,7 +209,7 @@ function startSession() {
     refresh();
   });
   listen("branches", collection(db, "branches"), snap => { S.branches = docs(snap).sort((a, b) => a.name.localeCompare(b.name)); refresh(); });
-  listen("tasks", query(collection(db, "tasks"), where("participants", "array-contains", S.me.id)), snap => { S.tasks = docs(snap); refresh(); });
+  listen("tasks", query(collection(db, "tasks"), where("participants", "array-contains", S.me.id)), snap => { S.tasks = docs(snap); processNotifs(snap); refresh(); });
   clearInterval(S.ut);
   if (isAdmin()) { loadUsage(); S.ut = setInterval(loadUsage, 10 * 60 * 1000); }
 }
@@ -210,6 +217,7 @@ async function logout(msg) {
   await flushUsage();
   Object.keys(unsub).forEach(k => stopListen(k)); clearInterval(S.ut);
   S.me = null; S.users = []; S.tasks = []; S.btasks = []; S.adminTasks = null; S.mode = "login";
+  S.notifs = []; S.showN = false; S.nReady = false;
   await signOut(auth); render(); if (msg) toast(msg);
 }
 onAuthStateChanged(auth, async u => {
@@ -224,6 +232,68 @@ async function loadUsage() {
 }
 const usedOf = k => (S.usage?.[k] || 0) + UC[{ reads: "r", writes: "w", deletes: "d" }[k]];
 const usageAlerts = () => Object.keys(LIMITS).filter(k => usedOf(k) / LIMITS[k] >= WARN);
+
+/* ---------- notifications (no extra Firestore reads or writes) ---------- */
+const lsGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { } };
+function loadNotifs() { S.notifs = lsGet("tm_n_" + S.me.id, []); S.clearedAt = lsGet("tm_c_" + S.me.id, ""); S.nReady = false; }
+function saveNotifs() { S.notifs = S.notifs.slice(0, 40); lsSet("tm_n_" + S.me.id, S.notifs); updBell(); }
+const unread = () => S.notifs.filter(n => !n.read).length;
+function updBell() {
+  const n = unread(), b = $("#nb");
+  if (b) { b.textContent = n; b.style.display = n ? "inline-block" : "none"; }
+  document.title = (n ? `(${n}) ` : "") + "Task Manager";
+}
+function candidates(t) {
+  const me = S.me.id, out = [], cut = Date.now() - 7 * 864e5;
+  if (!(t.participants || []).includes(me)) return out;
+  for (const h of t.history || []) {
+    if (h.by === me || new Date(h.ts).getTime() < cut || (S.clearedAt && h.ts <= S.clearedAt)) continue;
+    let text = null;
+    if (h.action === "Created") text = t.assignedTo === me ? `📥 New task from ${h.byName}: ${t.title}` : t.parentId ? `➕ ${h.byName} added a subtask: ${t.title}` : null;
+    else if (h.action === "Status → Completed") text = `✅ ${h.byName} completed: ${t.title}`;
+    else if (h.action === "Status → Rework" && t.assignedTo === me) text = `↩ Rework requested by ${h.byName}: ${t.title}${h.note ? " – " + h.note : ""}`;
+    else if (h.action === "Status → Rejected") text = `⛔ ${h.byName} rejected: ${t.title}`;
+    if (text) out.push({ id: `${t.id}|${h.ts}|${h.action}`, ts: h.ts, text, taskId: t.id, read: false });
+  }
+  return out;
+}
+function beep() {
+  try {
+    const c = new (window.AudioContext || window.webkitAudioContext)(), o = c.createOscillator(), g = c.createGain();
+    o.connect(g); g.connect(c.destination); o.frequency.value = 880;
+    g.gain.setValueAtTime(.15, c.currentTime); g.gain.exponentialRampToValueAtTime(.001, c.currentTime + .35);
+    o.start(); o.stop(c.currentTime + .36);
+  } catch { }
+}
+function alertNew(list) {
+  beep(); try { navigator.vibrate?.([200, 100, 200]); } catch { }
+  toast(list.length > 3 ? `🔔 ${list.length} new updates` : list.map(n => n.text).join("   •   "), 6000);
+  if (document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted")
+    list.slice(0, 3).forEach(n => { try { new Notification("Task Manager", { body: n.text, tag: n.id }); } catch { } });
+}
+function processNotifs(snap) {
+  const known = new Set(S.notifs.map(n => n.id)), fresh = [];
+  snap.docChanges().forEach(c => {
+    if (c.type === "removed") return;
+    candidates({ id: c.doc.id, ...c.doc.data() }).forEach(n => { if (!known.has(n.id)) { known.add(n.id); fresh.push(n); } });
+  });
+  const live = S.nReady;
+  if (fresh.length) {
+    S.notifs = [...fresh, ...S.notifs].sort((a, b) => b.ts.localeCompare(a.ts)); saveNotifs();
+    if (live) alertNew(fresh);
+  }
+  if (!live && !snap.metadata.fromCache) {
+    S.nReady = true;
+    const u = unread(); if (u) toast(`🔔 You have ${u} unread notification${u > 1 ? "s" : ""}`, 5000);
+  }
+}
+function notifPanel() {
+  const items = S.notifs.map(n => `<div class="ni ${n.read ? "" : "un"}" data-act="openN" data-id="${esc(n.taskId)}"><div>${esc(n.text)}</div><div class="sm muted">${fmt(n.ts)}</div></div>`).join("")
+    || `<div class="muted center" style="padding:30px">No notifications yet</div>`;
+  const perm = typeof Notification !== "undefined" && Notification.permission === "default" ? `<button class="btn o s" data-act="askPerm">Enable pop-ups</button>` : "";
+  return `<div id="np"><div class="nh"><b class="grow">🔔 Notifications</b>${perm}<button class="btn o s" data-act="clearN">Clear</button><button class="lnk" data-act="bell">✕</button></div><div class="nl">${items}</div></div>`;
+}
 
 /* ---------- UI atoms ---------- */
 const badge = (t, c) => `<span class="badge" style="background:${c}">${esc(t)}</span>`;
@@ -254,7 +324,7 @@ function authView() {
   const f = (id, label, type = "text", ph = "") => `<div class="f"><label>${label}</label><input id="${id}" type="${type}" placeholder="${ph}" autocomplete="${type === "password" ? "current-password" : "username"}" ${id === "a_email" && m === "login" ? 'inputmode="text"' : ""}></div>`;
   return `<div class="auth"><div class="card">
     <div class="center" style="font-size:48px">✅</div><h2 class="center">Task Manager</h2>
-    <div class="center muted">Assign. Delegate. Complete!.</div>
+    <div class="center muted">Assign. Delegate. Complete.</div>
     ${m === "setup" ? f("a_name", "Admin full name") : ""}
     ${m === "setup" ? f("a_email", "Admin Gmail", "email") : f("a_email", "User ID (4 digits)", "text", "e.g. 1001")}
     ${f("a_pw", "Password", "password")}
@@ -438,10 +508,12 @@ function render(keep) {
   const warn = isAdmin() && usageAlerts().length ? " ⚠️" : "";
   root.innerHTML = `<div class="top"><span style="font-size:20px">✅</span><b>Task Manager</b><span class="grow"></span>
       <span class="who">${esc(u.name)} • ${esc(u.role.toUpperCase())}${bname(u.branchId) ? " • " + esc(bname(u.branchId)) : ""}<br>v${APP_VERSION}</span>
+      <button title="Notifications" data-act="bell" style="position:relative">🔔<span id="nb" class="nbadge">0</span></button>
       <button title="Logout" data-act="logout">⏻</button></div>
     <div class="shell"><nav class="nav">${tabs.map(([k, i, l]) => `<button class="${on === k ? "on" : ""}" data-act="nav" data-k="${k}"><span class="ic">${i}</span>${l}${k === "admin" ? warn : ""}</button>`).join("")}</nav>
-    <main class="main"><div class="wrap">${body}</div></main></div>`;
+    <main class="main"><div class="wrap">${body}</div></main></div>${S.showN ? notifPanel() : ""}`;
   if (saved) restore(saved);
+  updBell();
 }
 const refresh = () => { if (S.me && ["list", "detail", "admin", "branch"].includes(S.view)) render(true); };
 
@@ -483,6 +555,13 @@ async function loadCrumbs(pid) {
 /* ---------- actions ---------- */
 const ACT = {
   doUpdate,
+  bell() {
+    if (S.showN) { S.notifs.forEach(n => n.read = true); saveNotifs(); }
+    S.showN = !S.showN; render(true);
+  },
+  openN(d) { S.notifs.forEach(n => n.read = true); saveNotifs(); S.showN = false; openTask(d.id); },
+  clearN() { S.clearedAt = nowIso(); lsSet("tm_c_" + S.me.id, S.clearedAt); S.notifs = []; saveNotifs(); render(true); },
+  askPerm() { try { Notification.requestPermission().then(() => render(true)); } catch { } },
   mode: d => { S.mode = d.m; render(); },
   async login() {
     let e = $("#a_email").value.trim(), p = $("#a_pw").value;
