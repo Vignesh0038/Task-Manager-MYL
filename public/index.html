@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#4F46E5">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <title>Task Manager</title>
 <style>
 :root{--p:#4F46E5;--bg:#F3F4F6;--mut:#6B7280}
@@ -66,6 +69,9 @@ button.lnk{background:none;border:0;color:var(--p);cursor:pointer;font:inherit;p
 #upd.force .ub{flex-direction:column;border-radius:16px;padding:26px;max-width:340px;text-align:center;background:#fff;color:#111827}
 #toast{position:fixed;left:50%;bottom:80px;transform:translateX(-50%);background:#111827;color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:60;max-width:90vw}
 #toast.show{opacity:1}
+.top .av{background:#fff;color:var(--p);border-radius:50%;width:34px;height:34px;font-size:16px;font-weight:700}
+.dlg{position:fixed;inset:0;background:rgba(17,24,39,.55);z-index:70;display:flex;align-items:center;justify-content:center;padding:20px}
+.dlg .db{background:#fff;border-radius:16px;padding:20px;max-width:360px;width:100%;display:flex;flex-direction:column;gap:16px}
 .nbadge{position:absolute;top:-4px;right:-6px;background:#ef4444;color:#fff;border-radius:10px;font-size:10px;padding:1px 5px;font-weight:700;display:none}
 #np{position:fixed;top:0;right:0;bottom:0;width:min(380px,100%);background:#fff;z-index:40;box-shadow:-4px 0 20px rgba(0,0,0,.2);display:flex;flex-direction:column;padding-top:env(safe-area-inset-top)}
 #np .nh{display:flex;gap:8px;align-items:center;padding:12px 14px;border-bottom:1px solid #e5e7eb}
@@ -88,9 +94,11 @@ import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager
          getDocs, setDoc, addDoc, updateDoc, deleteDoc, query, where, orderBy, limit, onSnapshot,
          arrayUnion, increment, writeBatch }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getMessaging, getToken } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 import { firebaseConfig, ADMIN_EMAIL } from "./config.js";
+import { VAPID_KEY } from "./push-config.js";
 
-const APP_VERSION = "2.1.3";   // release.js changes this line automatically
+const APP_VERSION = "2.3.1";   // release.js changes this line automatically
 const LIMITS = { reads: 50000, writes: 20000, deletes: 20000 };   // Firebase Spark daily limits
 const WARN = 0.7;
 const STATUSES = ["Pending", "In Progress", "On Hold", "Rework", "Completed", "Rejected"];
@@ -143,6 +151,46 @@ async function wr(fn, n = 1) {
   catch (e) { console.error(e); toast("Failed: " + errMsg(e)); return false; }
 }
 
+/* ---------- in-page dialog (the native confirm() does not work inside the APK) ---------- */
+function ask(msg, okLabel = "Yes", cancel = true) {
+  return new Promise(res => {
+    const d = document.createElement("div"); d.className = "dlg";
+    d.innerHTML = `<div class="db"><div style="white-space:pre-line">${esc(msg)}</div><div class="row" style="justify-content:flex-end">${cancel ? '<button class="btn o" data-k="0">Cancel</button>' : ""}<button class="btn" data-k="1">${esc(okLabel)}</button></div></div>`;
+    d.addEventListener("click", e => { const b = e.target.closest("[data-k]"); if (b) { d.remove(); res(b.dataset.k === "1"); } });
+    document.body.appendChild(d);
+  });
+}
+
+/* ---------- push notifications (installed web app, works when the app is closed) ---------- */
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => { });
+  navigator.serviceWorker.addEventListener("message", e => { if (e.data && e.data.taskId && S.me) openTask(e.data.taskId); });
+}
+const pushOK = () => "serviceWorker" in navigator && "PushManager" in window && typeof Notification !== "undefined";
+const keyOK = () => VAPID_KEY && !VAPID_KEY.startsWith("PASTE");
+async function registerPush(askPermission) {
+  if (!pushOK()) throw new Error("This window cannot receive push. Install the app from Chrome or Edge.");
+  if (!keyOK()) throw new Error("Web Push key missing in push-config.js");
+  if (Notification.permission !== "granted") {
+    if (!askPermission) return false;
+    if ((await Notification.requestPermission()) !== "granted") throw new Error("Notifications are blocked. Allow them in the browser / app settings.");
+  }
+  const reg = await navigator.serviceWorker.ready;
+  const tok = await getToken(getMessaging(app), { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
+  if (!tok) throw new Error("Could not get a push token");
+  await setDoc(doc(db, "devices", tok), { uid: S.me.id, ua: navigator.userAgent.slice(0, 120), updated: nowIso() });
+  track("w"); lsSet("tm_tok", tok);
+  return true;
+}
+function pushCard() {
+  let st, btn = "";
+  if (!pushOK()) st = "This window (APK / EXE) cannot receive push when closed. To get push: open the website in <b>Chrome (Android)</b> or <b>Edge / Chrome (PC)</b> and choose <b>Install app / Add to Home screen</b>, then log in there and press the button below.";
+  else if (Notification.permission === "denied") st = "Notifications are blocked for this app. Allow them in the browser / phone settings, then reload.";
+  else if (Notification.permission === "granted" && lsGet("tm_tok", null)) st = "✅ Push is ON for this device. You will be alerted even when the app is closed (it can take a few minutes).";
+  else { st = "Get alerts for new tasks and completed tasks even when the app is closed."; btn = `<div><button class="btn" data-act="enablePush">Enable push on this device</button></div>`; }
+  return `<div class="card"><h3>📲 Push notifications</h3><div class="muted">${st}</div>${btn}</div>`;
+}
+
 /* ---------- app update check (web, APK and EXE all show this) ---------- */
 async function checkVersion() {
   try {
@@ -168,7 +216,7 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 /* ---------- state ---------- */
 const S = { me: null, tab: "mine", view: "list", task: null, parent: null, filter: "All", mem: "All", q: "", pick: null, asec: "users",
   users: [], branches: [], tasks: [], btasks: [], adminTasks: null, usage: null, cur: undefined, subs: [], crumbs: [],
-  mode: "login", settingUp: false, ut: null, notifs: [], showN: false, nReady: false, clearedAt: "" };
+  mode: "login", settingUp: false, ut: null, notifs: [], showN: false, nReady: false, clearedAt: "", pending: new URLSearchParams(location.search).get("task") };
 const unsub = {};
 const uById = id => S.users.find(u => u.id === id);
 const uname = id => uById(id)?.name || "?";
@@ -198,6 +246,8 @@ async function boot(u) {
     if (!s.exists() || s.data().active === false) { toast("Your account is not active. Contact the admin."); await signOut(auth); return; }
     S.me = { id: u.uid, ...s.data() }; S.tab = "mine"; S.view = "list"; S.filter = "All"; S.mem = "All"; S.q = "";
     startSession(); render();
+    registerPush(false).then(() => render(true)).catch(() => { });          // silently refresh the push token if already allowed
+    if (S.pending) { const id = S.pending; S.pending = null; history.replaceState(null, "", location.pathname); openTask(id); }
   } catch (e) { toast("Cannot load profile: " + errMsg(e)); await signOut(auth); }
 }
 function startSession() {
@@ -215,6 +265,7 @@ function startSession() {
 }
 async function logout(msg) {
   await flushUsage();
+  try { const tk = lsGet("tm_tok", null); if (tk) await deleteDoc(doc(db, "devices", tk)); } catch (e) { }   // stop pushes for this user on this device
   Object.keys(unsub).forEach(k => stopListen(k)); clearInterval(S.ut);
   S.me = null; S.users = []; S.tasks = []; S.btasks = []; S.adminTasks = null; S.mode = "login";
   S.notifs = []; S.showN = false; S.nReady = false;
@@ -379,7 +430,10 @@ function accountView() {
     <div class="card"><div class="title">${esc(u.name)}</div><div class="muted">User ID: ${esc(u.userId || "admin")}</div>
       <div class="muted">Role: ${esc(u.role)}</div><div class="muted">Branch: ${esc(bname(u.branchId) || "Not assigned")}</div></div>
     <div class="card"><h3>Change password</h3>${f("c_cur", "Current password")}${f("c_new", "New password")}${f("c_con", "Confirm new password")}
-      <div><button class="btn" data-act="changePw">Change password</button></div></div>`;
+      <div><button class="btn" data-act="changePw">Change password</button></div></div>
+    ${pushCard()}
+    <div class="card"><h3>Log out</h3><div class="muted sm">You will need your User ID and password to log in again.</div>
+      <div><button class="btn r" data-act="logout">Log out</button></div></div>`;
 }
 
 function detailView() {
@@ -509,7 +563,7 @@ function render(keep) {
   root.innerHTML = `<div class="top"><span style="font-size:20px">✅</span><b>Task Manager</b><span class="grow"></span>
       <span class="who">${esc(u.name)} • ${esc(u.role.toUpperCase())}${bname(u.branchId) ? " • " + esc(bname(u.branchId)) : ""}<br>v${APP_VERSION}</span>
       <button title="Notifications" data-act="bell" style="position:relative">🔔<span id="nb" class="nbadge">0</span></button>
-      <button title="Logout" data-act="logout">⏻</button></div>
+      <button class="av" title="My account" data-act="nav" data-k="acct">${esc((u.name || "?").trim()[0] || "?").toUpperCase()}</button></div>
     <div class="shell"><nav class="nav">${tabs.map(([k, i, l]) => `<button class="${on === k ? "on" : ""}" data-act="nav" data-k="${k}"><span class="ic">${i}</span>${l}${k === "admin" ? warn : ""}</button>`).join("")}</nav>
     <main class="main"><div class="wrap">${body}</div></main></div>${S.showN ? notifPanel() : ""}`;
   if (saved) restore(saved);
@@ -586,7 +640,10 @@ const ACT = {
       track("w"); S.settingUp = false; await boot(c.user);
     } catch (x) { S.settingUp = false; toast(errMsg(x)); try { await signOut(auth); } catch { } }
   },
-  logout: () => logout(),
+  async logout() { if (await ask("Log out of Task Manager?", "Log out")) logout(); },
+  async enablePush() {
+    try { await registerPush(true); toast("✅ Push notifications enabled"); render(true); } catch (e) { toast(e.message || String(e), 6000); }
+  },
   nav: d => nav(d.k),
   open: d => openTask(d.id),
   back() {
@@ -610,7 +667,7 @@ const ACT = {
     const data = {
       parentId: S.parent || null, title, description: $("#f_desc").value.trim(), createdBy: S.me.id, assignedTo: who,
       participants, branchIds, status: "Pending", priority: $("#f_pri").value, due: due || "", remarks: "",
-      createdAt: nowIso(), completedAt: null, reworkCount: 0, history: [hist("Created", "Assigned to " + uname(who))]
+      createdAt: nowIso(), updatedAt: nowIso(), completedAt: null, reworkCount: 0, history: [hist("Created", "Assigned to " + uname(who))]
     };
     const ok = await wr(() => addDoc(collection(db, "tasks"), data));
     if (!ok) { btn.disabled = false; return; }
@@ -623,7 +680,7 @@ const ACT = {
     if (ns === "Rework" && !remark) return toast("Please write the reason for Rework in the remark box");
     if (ns === "Completed" && S.subs.some(s => !DONE.includes(s.status))) return toast("Finish all subtasks before completing this task");
     const upd = {
-      status: ns, remarks: remark || t.remarks || "",
+      status: ns, updatedAt: nowIso(), remarks: remark || t.remarks || "",
       completedAt: ns === "Completed" ? (t.status === "Completed" && t.completedAt ? t.completedAt : nowIso()) : null,
       history: arrayUnion(hist(`Status → ${ns}`, remark))
     };
@@ -631,7 +688,7 @@ const ACT = {
     if (await wr(() => updateDoc(doc(db, "tasks", t.id), upd))) { $("#remark").value = ""; toast("Status updated"); }
   },
   async delTask() {
-    if (!confirm("Delete this task, its subtasks and history?")) return;
+    if (!await ask("Delete this task, its subtasks and history?", "Delete")) return;
     const t = S.cur;
     async function del(id) {
       const q = isAdmin() ? query(collection(db, "tasks"), where("parentId", "==", id))
@@ -672,11 +729,11 @@ const ACT = {
   },
   resetHelp(d) {
     const u = uById(d.id);
-    alert(`Reset password for ${u.name} (ID ${u.userId}):\n\n1. Open your GitHub repository > Actions\n2. Task Manager maintenance > Run workflow\n3. mode: resetpw   user id: ${u.userId}   new password: (6+ characters)\n4. Run it, then give the user the new password.`);
+    ask(`Reset password for ${u.name} (ID ${u.userId}):\n\n1. Open your GitHub repository > Actions\n2. Task Manager maintenance > Run workflow\n3. mode: resetpw   user id: ${u.userId}   new password: (6+ characters)\n4. Run it, then give the user the new password.`, "OK", false);
   },
   async toggleActive(d) {
     const u = uById(d.id); const act = u.active === false;
-    if (!act && !confirm(`Deactivate ${u.name}? They will no longer be able to log in.`)) return;
+    if (!act && !await ask(`Deactivate ${u.name}? They will no longer be able to log in.`, "Deactivate")) return;
     if (await wr(() => updateDoc(doc(db, "users", u.id), { active: act }))) toast(act ? "User activated" : "User deactivated");
   },
   async createBranch() {
@@ -687,7 +744,7 @@ const ACT = {
   },
   async delBranch(d) {
     const b = S.branches.find(x => x.id === d.id);
-    if (!confirm(`Delete branch '${b.name}'? Users stay but become unassigned.`)) return;
+    if (!await ask(`Delete branch '${b.name}'? Users stay but become unassigned.`, "Delete")) return;
     const members = S.users.filter(u => u.branchId === b.id);
     await wr(async () => { const bt = writeBatch(db); members.forEach(u => bt.update(doc(db, "users", u.id), { branchId: null })); bt.delete(doc(db, "branches", b.id)); await bt.commit(); }, members.length + 1);
   },

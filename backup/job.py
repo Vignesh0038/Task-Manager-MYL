@@ -162,6 +162,84 @@ def usage():
         pass
 
 
+def push():
+    """Free push sender (runs every ~5 min on GitHub Actions). Sends a push for new task events to installed web apps."""
+    from firebase_admin import messaging
+    meta = db.collection("meta").document("push")
+    snap = meta.get()
+    m = snap.to_dict() if snap.exists else {}
+    now = datetime.now(timezone.utc)
+    iso = lambda d: d.strftime("%Y-%m-%dT%H:%M:%S.") + f"{d.microsecond // 1000:03d}Z"
+    if not m.get("lastRun"):
+        meta.set({"lastRun": iso(now), "sent": []})
+        print("Push watcher started.")
+        return
+    since = iso(datetime.fromisoformat(m["lastRun"].replace("Z", "+00:00")) - timedelta(minutes=10))
+    sent = list(m.get("sent", []))
+    seen = set(sent)
+    changed = list(db.collection("tasks").where("updatedAt", ">", since).stream())
+    reads = len(changed) + 1
+    by_uid, new_ids = {}, []
+
+    def add(uid, text, tid):
+        by_uid.setdefault(uid, []).append((text, tid))
+
+    for d in changed:
+        t = d.to_dict()
+        parts, title = t.get("participants", []), t.get("title", "Task")
+        for h in t.get("history", []):
+            if (h.get("ts") or "") <= since:
+                continue
+            nid = f"{d.id}|{h.get('ts')}|{h.get('action')}"
+            if nid in seen:
+                continue
+            seen.add(nid)
+            new_ids.append(nid)
+            who, act = h.get("byName") or "Someone", h.get("action")
+            others = [u for u in parts if u != h.get("by")]
+            if act == "Created":
+                for u in others:
+                    if u == t.get("assignedTo"):
+                        add(u, f"\U0001F4E5 New task from {who}: {title}", d.id)
+                    elif t.get("parentId"):
+                        add(u, f"\u2795 {who} added a subtask: {title}", d.id)
+            elif act == "Status \u2192 Completed":
+                for u in others:
+                    add(u, f"\u2705 {who} completed: {title}", d.id)
+            elif act == "Status \u2192 Rework":
+                if t.get("assignedTo") != h.get("by"):
+                    note = f" \u2013 {h.get('note')}" if h.get("note") else ""
+                    add(t.get("assignedTo"), f"\u21A9 Rework requested by {who}: {title}{note}", d.id)
+            elif act == "Status \u2192 Rejected":
+                for u in others:
+                    add(u, f"\u26D4 {who} rejected: {title}", d.id)
+
+    sent_ok = 0
+    if by_uid:
+        uids = list(by_uid)
+        messages, refs = [], []
+        for i in range(0, len(uids), 10):
+            devs = list(db.collection("devices").where("uid", "in", uids[i:i + 10]).stream())
+            reads += len(devs)
+            for dev in devs:
+                items = by_uid[dev.get("uid")]
+                messages.append(messaging.Message(
+                    token=dev.id,
+                    data={"title": "Task Manager", "body": "\n".join(x[0] for x in items), "taskId": items[0][1], "tag": items[0][1]},
+                    webpush=messaging.WebpushConfig(headers={"Urgency": "high", "TTL": "86400"})))
+                refs.append(dev.reference)
+        if messages:
+            res = messaging.send_each(messages)
+            for r, ref in zip(res.responses, refs):
+                if r.success:
+                    sent_ok += 1
+                elif isinstance(r.exception, messaging.UnregisteredError):
+                    ref.delete()                      # phone uninstalled the app / revoked permission
+    meta.set({"lastRun": iso(now), "sent": (sent + new_ids)[-300:]})
+    bump(reads=reads, writes=2)
+    print(f"Push: {len(new_ids)} new event(s), {sent_ok} notification(s) sent.")
+
+
 def resetpw(user_id, new_pw):
     """Admin resets a user's password (users have no real email, so the app cannot do this itself)."""
     from firebase_admin import auth
@@ -181,4 +259,4 @@ if __name__ == "__main__":
     if mode == "resetpw":
         resetpw(sys.argv[2] if len(sys.argv) > 2 else "", sys.argv[3] if len(sys.argv) > 3 else "")
     else:
-        {"cleanup": cleanup, "usage": usage}[mode]()
+        {"cleanup": cleanup, "usage": usage, "push": push}[mode]()

@@ -2,13 +2,14 @@ name: Task Manager maintenance
 
 on:
   schedule:
-    - cron: "30 21 * * *"   # 03:00 IST daily  -> backup + delete completed tasks older than 7 days
-    - cron: "0 */6 * * *"   # every 6 hours    -> Firebase usage check (emails admin at 70% / 90%)
+    - cron: "*/30 * * * *"   # every 30 min  -> push notifications
+    - cron: "30 21 * * *"    # 03:00 IST daily -> backup + delete completed tasks older than 7 days
+    - cron: "0 */6 * * *"    # every 6 hours   -> Firebase usage check (emails admin at 70% / 90%)
   workflow_dispatch:
     inputs:
       mode:
-        description: "cleanup, usage or resetpw"
-        default: "cleanup"
+        description: "cleanup, usage, push or resetpw"
+        default: "push"
       userid:
         description: "resetpw only: 4-digit User ID"
         default: ""
@@ -24,6 +25,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backup/requirements.txt
       - run: pip install -r backup/requirements.txt
       - name: Run job
         env:
@@ -31,7 +34,7 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
-          MODE: ${{ github.event.inputs.mode || (github.event.schedule == '30 21 * * *' && 'cleanup') || 'usage' }}
+          MODE: ${{ github.event.inputs.mode || (github.event.schedule == '*/30 * * * *' && 'push') || (github.event.schedule == '30 21 * * *' && 'cleanup') || 'usage' }}
           USERID: ${{ github.event.inputs.userid }}
           NEWPASS: ${{ github.event.inputs.newpass }}
         run: python backup/job.py "$MODE" "$USERID" "$NEWPASS"
